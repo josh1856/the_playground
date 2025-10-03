@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Quick Quoter — Estimate Builder</title>
+<style>
+  :root{--bg:#0b0f14;--panel:#101722;--ink:#e6edf3;--muted:#9aa4b2;--accent:#5ac8fa;--ok:#30d158}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;-webkit-text-size-adjust:100%}
+  header{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #1c2330;background:linear-gradient(180deg,#0f141d,#0c1118)}
+  header h1{margin:0;font-size:16px}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#0d1421;border:1px solid #1f2a3b;color:var(--muted);font-size:12px}
+  .wrap{max-width:980px;margin:12px auto;padding:0 12px;display:grid;gap:12px}
+  .card{background:#101722;border:1px solid #263247;border-radius:12px;padding:12px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  label{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}
+  input,textarea,select{width:100%;padding:10px;border-radius:10px;border:1px solid #263247;background:#0f1522;color:var(--ink)}
+  textarea{min-height:80px;resize:vertical}
+  table{width:100%;border-collapse:collapse}
+  th,td{border-bottom:1px solid #1e2737;padding:8px;text-align:left}
+  th{color:#9aa4b2;font-weight:600;font-size:12px;text-transform:uppercase}
+  tfoot td{border:none}
+  .right{text-align:right}
+  .total{font-size:20px;font-weight:700}
+  .flex{display:flex;gap:8px;flex-wrap:wrap}
+  .muted{color:#9aa4b2}
+  button{background:#0f1522;color:var(--ink);border:1px solid #263247;padding:9px 12px;border-radius:10px;cursor:pointer}
+  button.primary{border-color:var(--accent)}
+  .status{font-weight:600}
+  @media (max-width:760px){ .row,.row3{grid-template-columns:1fr} }
+  /* Print = clean PDF */
+  @media print{
+    header,.actions{display:none}
+    body{background:#fff;color:#000}
+    .wrap{max-width:900px;margin:0 auto}
+    .card{background:#fff;border:none;padding:0}
+    input,textarea,select{border:none;padding:0}
+    a{color:#000;text-decoration:none}
+    table th,table td{border-color:#ddd}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Quick Quoter</h1>
+  <div class="pill">Client-ready PDF • data stays in your browser</div>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Your business / From</label>
+        <textarea id="from">Your Name
+Company (optional)
+email@example.com
+(555) 123-4567</textarea>
+      </div>
+      <div>
+        <label>Client / Bill To</label>
+        <textarea id="to">Client Name
+Company
+client@email.com</textarea>
+      </div>
+    </div>
+    <div class="row3" style="margin-top:8px">
+      <div><label>Estimate #</label><input id="number" value="EST-1001"></div>
+      <div><label>Date</label><input id="date" type="date"></div>
+      <div><label>Valid until</label><input id="valid" type="date"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="flex actions" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong>Line Items</strong>
+      <div class="flex">
+        <button id="add" class="primary">+ Add item</button>
+        <button id="clear">Clear all</button>
+      </div>
+    </div>
+    <table id="items">
+      <thead><tr><th style="width:46%">Description</th><th>Qty</th><th>Rate</th><th class="right">Amount</th><th></th></tr></thead>
+      <tbody></tbody>
+      <tfoot>
+        <tr><td colspan="2"></td><td class="right muted">Subtotal</td><td class="right" id="subtotal">$0.00</td><td></td></tr>
+        <tr>
+          <td colspan="2"></td>
+          <td class="right">
+            <span class="muted">Tax %</span>
+            <input id="tax" type="number" min="0" step="0.01" style="width:90px;margin-left:8px">
+          </td>
+          <td class="right" id="taxAmt">$0.00</td><td></td>
+        </tr>
+        <tr>
+          <td colspan="2"></td>
+          <td class="right">
+            <span class="muted">Discount</span>
+            <input id="disc" type="number" min="0" step="0.01" style="width:90px;margin-left:8px" placeholder="amount">
+          </td>
+          <td class="right" id="discAmt">−$0.00</td><td></td>
+        </tr>
+        <tr>
+          <td colspan="2"></td>
+          <td class="right">
+            <span class="muted">Deposit %</span>
+            <input id="deposit" type="number" min="0" max="100" step="1" style="width:90px;margin-left:8px" value="0">
+          </td>
+          <td class="right" id="depAmt">$0.00</td><td></td>
+        </tr>
+        <tr><td colspan="2"></td><td class="right total">Total</td><td class="right total" id="total">$0.00</td><td></td></tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Scope / Notes</label>
+        <textarea id="notes">Project scope summary, milestones, exclusions…</textarea>
+      </div>
+      <div>
+        <label>Terms</label>
+        <textarea id="terms">Payment due within 15 days of acceptance. Changes billed at standard hourly rate.</textarea>
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <div>
+        <label>Status</label>
+        <select id="status">
+          <option>Draft</option>
+          <option>Sent</option>
+          <option>Accepted</option>
+          <option>Declined</option>
+        </select>
+      </div>
+      <div>
+        <label>Client email for “Accept”</label>
+        <input id="clientEmail" placeholder="client@email.com">
+      </div>
+    </div>
+  </div>
+
+  <div class="card actions" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+    <button id="save">Save</button>
+    <button id="load">Load</button>
+    <button id="share">Share link</button>
+    <button id="accept" class="primary">Send “Accept” email</button>
+    <button id="print" class="primary">Export PDF</button>
+    <a href="index.html" style="margin-left:auto">⟵ Back</a>
+  </div>
+
+  <!-- Preview (also becomes the print body) -->
+  <div class="card" id="preview" style="background:#0f1522;border-style:dashed">
+    <div class="muted">Use “Export PDF” for a clean printable version.</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
+  const els={
+    from:$('#from'), to:$('#to'), number:$('#number'), date:$('#date'), valid:$('#valid'),
+    itemsT:$('#items tbody'), subtotal:$('#subtotal'), tax:$('#tax'), taxAmt:$('#taxAmt'),
+    disc:$('#disc'), discAmt:$('#discAmt'), deposit:$('#deposit'), depAmt:$('#depAmt'),
+    total:$('#total'), notes:$('#notes'), terms:$('#terms'), status:$('#status'),
+    clientEmail:$('#clientEmail'),
+    add:$('#add'), clear:$('#clear'), save:$('#save'), load:$('#load'), share:$('#share'),
+    accept:$('#accept'), print:$('#print'), preview:$('#preview')
+  };
+  // Dates
+  if(!els.date.value) els.date.value = new Date().toISOString().slice(0,10);
+  if(!els.valid.value){ const d=new Date(); d.setDate(d.getDate()+30); els.valid.value=d.toISOString().slice(0,10); }
+
+  const currency = new Intl.NumberFormat(undefined,{style:'currency',currency:'USD'});
+  function addItem(desc='', qty=1, rate=0){
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td><input class="desc" value="${desc}"></td>
+      <td><input class="qty" type="number" min="0" step="0.01" value="${qty}"></td>
+      <td><input class="rate" type="number" min="0" step="0.01" value="${rate}"></td>
+      <td class="right amount">$0.00</td>
+      <td class="right"><button class="del">✕</button></td>`;
+    els.itemsT.appendChild(tr);
+    tr.querySelectorAll('input').forEach(i=>i.addEventListener('input', recalc));
+    tr.querySelector('.del').addEventListener('click', ()=>{ tr.remove(); recalc(); saveDraft(); });
+    recalc();
+  }
+  function items(){ return [...els.itemsT.querySelectorAll('tr')].map(tr=>({
+    d:tr.querySelector('.desc').value||'',
+    q:parseFloat(tr.querySelector('.qty').value)||0,
+    r:parseFloat(tr.querySelector('.rate').value)||0
+  })); }
+  function recalc(){
+    let sub=0;
+    els.itemsT.querySelectorAll('tr').forEach(tr=>{
+      const q=parseFloat(tr.querySelector('.qty').value)||0;
+      const r=parseFloat(tr.querySelector('.rate').value)||0;
+      const amt=q*r; sub+=amt;
+      tr.querySelector('.amount').textContent=currency.format(amt);
+    });
+    const taxPct=parseFloat(els.tax.value)||0;
+    const taxAmt=sub*taxPct/100;
+    const disc=parseFloat(els.disc.value)||0;
+    const total=sub+taxAmt-Math.max(0,disc);
+    const depPct=Math.max(0,Math.min(100,parseFloat(els.deposit.value)||0));
+    const depAmt= total*(depPct/100);
+
+    els.subtotal.textContent=currency.format(sub);
+    els.taxAmt.textContent=currency.format(taxAmt);
+    els.discAmt.textContent='−'+currency.format(Math.max(0,disc));
+    els.total.textContent=currency.format(total);
+    els.depAmt.textContent=currency.format(depAmt);
+
+    renderPreview();
+  }
+
+  function renderPreview(){
+    const its = items();
+    els.preview.innerHTML = `
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <h2 style="margin:0 0 6px 0">ESTIMATE</h2>
+          <div># ${esc(els.number.value)}</div>
+          <div>Date: ${els.date.value}</div>
+          <div>Valid until: ${els.valid.value}</div>
+          <div class="status">Status: ${esc(els.status.value)}</div>
+        </div>
+      </div>
+      <div class="row" style="margin:10px 0">
+        <div><div class="muted">From</div><pre style="white-space:pre-wrap;margin:4px 0 0">${esc(els.from.value)}</pre></div>
+        <div><div class="muted">To</div><pre style="white-space:pre-wrap;margin:4px 0 0">${esc(els.to.value)}</pre></div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;margin-top:10px">
+        <thead><tr><th align="left">Description</th><th align="right">Qty</th><th align="right">Rate</th><th align="right">Amount</th></tr></thead>
+        <tbody>${its.map(it=>`<tr><td>${esc(it.d)}</td><td align="right">${num(it.q)}</td><td align="right">${currency.format(it.r)}</td><td align="right">${currency.format(it.q*it.r)}</td></tr>`).join('')}</tbody>
+      </table>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px">
+        <div>
+          <div class="muted">Scope / Notes</div>
+          <div>${esc(els.notes.value).replace(/\n/g,'<br>')}</div>
+          <div class="muted" style="margin-top:10px">Terms</div>
+          <div>${esc(els.terms.value).replace(/\n/g,'<br>')}</div>
+        </div>
+        <div>
+          <table style="border-collapse:collapse">
+            <tr><td style="padding:4px 8px;color:#666">Subtotal</td><td style="padding:4px 8px" align="right">${els.subtotal.textContent}</td></tr>
+            <tr><td style="padding:4px 8px;color:#666">Tax</td><td style="padding:4px 8px" align="right">${els.taxAmt.textContent}</td></tr>
+            <tr><td style="padding:4px 8px;color:#666">Discount</td><td style="padding:4px 8px" align="right">${els.discAmt.textContent}</td></tr>
+            <tr><td style="padding:4px 8px;color:#000;font-weight:700">Total</td><td style="padding:4px 8px;font-weight:700" align="right">${els.total.textContent}</td></tr>
+            <tr><td style="padding:4px 8px;color:#666">Deposit (${Math.max(0,Math.min(100,parseFloat(els.deposit.value)||0))}%)</td><td style="padding:4px 8px" align="right">${els.depAmt.textContent}</td></tr>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  // Save/Load/Share
+  function snapshot(){
+    return {
+      from:els.from.value,to:els.to.value,number:els.number.value,date:els.date.value,valid:els.valid.value,
+      items:items(),tax:els.tax.value,disc:els.disc.value,deposit:els.deposit.value,
+      notes:els.notes.value,terms:els.terms.value,status:els.status.value,clientEmail:els.clientEmail.value
+    };
+  }
+  function saveDraft(){ localStorage.setItem('quick_quoter_draft', JSON.stringify(snapshot())); }
+  function loadDraft(){
+    const s=localStorage.getItem('quick_quoter_draft'); if(!s) return;
+    const d=JSON.parse(s); applyData(d);
+  }
+  function shareLink(){
+    const data=btoa(unescape(encodeURIComponent(JSON.stringify(snapshot()))));
+    const url = location.origin+location.pathname+'#'+data;
+    navigator.clipboard?.writeText(url);
+    alert('Shareable link copied to clipboard!');
+  }
+  function applyData(d){
+    els.from.value=d.from||''; els.to.value=d.to||''; els.number.value=d.number||''; els.date.value=d.date||''; els.valid.value=d.valid||'';
+    els.itemsT.innerHTML=''; (d.items||[]).forEach(it=>addItem(it.d,it.q,it.r));
+    els.tax.value=d.tax||''; els.disc.value=d.disc||''; els.deposit.value=d.deposit||'';
+    els.notes.value=d.notes||''; els.terms.value=d.terms||''; els.status.value=d.status||'Draft';
+    els.clientEmail.value=d.clientEmail||'';
+    recalc();
+  }
+
+  // “Accept” email (client sends you approval)
+  function sendAcceptEmail(){
+    const to = els.clientEmail.value.trim();
+    if(!to){ alert('Add a client email first.'); return; }
+    const subject = encodeURIComponent(`Accepting estimate ${els.number.value}`);
+    const body = encodeURIComponent(
+`Hi,
+
+I accept estimate ${els.number.value} for ${els.to.value.split('\n')[0] || 'the project'}.
+
+Total: ${els.total.textContent}
+Deposit: ${els.depAmt.textContent}
+
+Please reply with next steps.
+
+Thanks!`);
+    location.href = `mailto:${to}?subject=${subject}&body=${body}`;
+  }
+
+  // Utils
+  function num(n){ return (Math.round(n*100)/100).toLocaleString(); }
+  const esc = s => String(s||'').replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&gt;','>':'&lt;','"':'&quot;' }[c]));
+
+  // Events
+  els.add.addEventListener('click', ()=>{ addItem('Service',1,100); saveDraft(); });
+  els.clear.addEventListener('click', ()=>{ els.itemsT.innerHTML=''; recalc(); saveDraft(); });
+  ['from','to','number','date','valid','tax','disc','deposit','notes','terms','status','clientEmail'].forEach(id=>{
+    $('#'+id).addEventListener('input', ()=>{ recalc(); saveDraft(); });
+  });
+  els.save.addEventListener('click', saveDraft);
+  els.load.addEventListener('click', loadDraft);
+  els.share.addEventListener('click', shareLink);
+  els.accept.addEventListener('click', sendAcceptEmail);
+  els.print.addEventListener('click', ()=>window.print());
+
+  // Load from hash if present
+  if(location.hash.length>1){
+    try{ const d=JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(1))))); applyData(d); }
+    catch(e){}
+  }
+  // First item + calc
+  if(els.itemsT.children.length===0){ addItem('Service',1,100); }
+  recalc();
+})();
+</script>
+</body>
+</html>
