@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Boids — Flocking Simulator</title>
+<style>
+  :root{--bg:#0b0f14;--panel:#101722;--ink:#e6edf3;--muted:#9aa4b2;--accent:#5ac8fa}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{display:grid;grid-template-columns:1fr 320px;grid-template-rows:auto 1fr;grid-template-areas:"h h" "c s";height:100%}
+  header{grid-area:h;display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #1c2330;background:linear-gradient(180deg,#0f141d,#0c1118)}
+  header h1{margin:0;font-size:16px;letter-spacing:.3px}
+  header small{color:var(--muted)}
+  #stage{grid-area:c;position:relative}
+  canvas{display:block;width:100%;height:100%;background:radial-gradient(ellipse at center,#0b0f14 0%,#070b10 70%,#05080c 100%)}
+  aside{grid-area:s;background:var(--panel);border-left:1px solid #1c2330;padding:12px 12px 18px;overflow:auto}
+  h2{margin:8px 0;font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:.2px}
+  .row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:6px 0}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  input[type=checkbox]{accent-color:var(--accent);transform:translateY(1px)}
+  button{background:#0f1522;color:var(--ink);border:1px solid #263247;padding:7px 10px;border-radius:8px;cursor:pointer;transition:.12s ease background,.12s ease transform}
+  button:hover{background:#141c2d} button:active{transform:translateY(1px)}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#0d1421;border:1px solid #1f2a3b;color:var(--muted);font-size:12px}
+  a.back{color:#9aa4b2;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Boids <small>— separation • alignment • cohesion</small></h1>
+    <div>
+      <span class="pill">Boids: <span id="countRO">200</span></span>
+      <span class="pill">FPS: <span id="fps">—</span></span>
+      <span style="margin-left:10px"><a class="back" href="index.html">⟵ Back</a></span>
+    </div>
+  </header>
+
+  <div id="stage"><canvas id="cv"></canvas></div>
+
+  <aside>
+    <h2>System</h2>
+    <div class="row"><label>Count</label><span id="countVal">200</span></div>
+    <input id="count" type="range" min="50" max="800" step="10" value="200">
+    <div class="row"><label>Max speed</label><span id="speedVal">2.5</span></div>
+    <input id="speed" type="range" min="1" max="6" step="0.1" value="2.5">
+    <div class="row"><label>Turn limit (force)</label><span id="forceVal">0.05</span></div>
+    <input id="force" type="range" min="0.01" max="0.3" step="0.01" value="0.05">
+    <div class="row"><label>Vision radius</label><span id="visionVal">70</span></div>
+    <input id="vision" type="range" min="20" max="150" step="1" value="70">
+    <div class="row"><label>Separation radius</label><span id="sepRadVal">20</span></div>
+    <input id="sepRad" type="range" min="5" max="80" step="1" value="20">
+
+    <h2>Rule weights</h2>
+    <div class="row"><label>Separation</label><span id="sepVal">1.4</span></div>
+    <input id="sep" type="range" min="0" max="3" step="0.1" value="1.4">
+    <div class="row"><label>Alignment</label><span id="aliVal">1.0</span></div>
+    <input id="ali" type="range" min="0" max="3" step="0.1" value="1.0">
+    <div class="row"><label>Cohesion</label><span id="cohVal">0.9</span></div>
+    <input id="coh" type="range" min="0" max="3" step="0.1" value="0.9">
+
+    <h2>Interact</h2>
+    <div class="row"><label>Wrap at edges</label><span><input id="wrap" type="checkbox" checked></span></div>
+    <div class="row"><label>Mouse attractor</label><span><input id="mouse" type="checkbox" checked></span></div>
+    <button id="randomize">Randomize</button>
+    <button id="pause">Pause (Space)</button>
+    <p style="color:var(--muted);font-size:12px;line-height:1.5;margin-top:8px">
+      • Click/drag to pull the flock. On touch devices, just drag your finger.<br>
+      • Try: increase <b>Separation</b> for tighter avoidance; increase <b>Alignment</b> to form streams.
+    </p>
+  </aside>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv'), ctx = cv.getContext('2d'), stage = document.getElementById('stage');
+  let W=0,H=0,dpr=Math.min(2,window.devicePixelRatio||1);
+  function resize(){W=stage.clientWidth;H=stage.clientHeight;cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';ctx.setTransform(dpr,0,0,dpr,0,0);}
+  addEventListener('resize',resize); resize();
+
+  const rand=(a,b)=>a+Math.random()*(b-a), TAU=Math.PI*2;
+
+  const $=id=>document.getElementById(id);
+  const ui={
+    count: $('count'), countVal:$('countVal'), countRO:$('countRO'),
+    speed:$('speed'), speedVal:$('speedVal'),
+    force:$('force'), forceVal:$('forceVal'),
+    vision:$('vision'), visionVal:$('visionVal'),
+    sepRad:$('sepRad'), sepRadVal:$('sepRadVal'),
+    sep:$('sep'), sepVal:$('sepVal'),
+    ali:$('ali'), aliVal:$('aliVal'),
+    coh:$('coh'), cohVal:$('cohVal'),
+    wrap:$('wrap'), mouse:$('mouse'),
+    randomize:$('randomize'), pause:$('pause'),
+    fps:$('fps')
+  };
+
+  const params={
+    N:parseInt(ui.count.value,10), maxSpeed:parseFloat(ui.speed.value),
+    maxForce:parseFloat(ui.force.value),
+    vision:parseFloat(ui.vision.value), sepRadius:parseFloat(ui.sepRad.value),
+    wSep:parseFloat(ui.sep.value), wAli:parseFloat(ui.ali.value), wCoh:parseFloat(ui.coh.value),
+    wrap:ui.wrap.checked, mouse:ui.mouse.checked
+  };
+  function sync(){
+    ui.countVal.textContent=params.N; ui.countRO.textContent=params.N;
+    ui.speedVal.textContent=params.maxSpeed.toFixed(1);
+    ui.forceVal.textContent=params.maxForce.toFixed(2);
+    ui.visionVal.textContent=params.vision.toFixed(0);
+    ui.sepRadVal.textContent=params.sepRadius.toFixed(0);
+    ui.sepVal.textContent=params.wSep.toFixed(1);
+    ui.aliVal.textContent=params.wAli.toFixed(1);
+    ui.cohVal.textContent=params.wCoh.toFixed(1);
+  } sync();
+
+  // Boid model
+  let boids=[];
+  function reset(){
+    boids = Array.from({length:params.N},()=>({
+      x:rand(0,W), y:rand(0,H),
+      vx:rand(-1,1), vy:rand(-1,1)
+    }));
+  } reset();
+
+  // Input
+  const mouse={x:0,y:0,down:false};
+  function setPointer(e){
+    const rect=cv.getBoundingClientRect();
+    const t = e.touches?e.touches[0]:e;
+    mouse.x=t.clientX-rect.left; mouse.y=t.clientY-rect.top;
+  }
+  cv.addEventListener('pointerdown',e=>{mouse.down=true;setPointer(e)});
+  cv.addEventListener('pointerup',e=>{mouse.down=false});
+  cv.addEventListener('pointermove',setPointer);
+  cv.addEventListener('touchstart',e=>{mouse.down=true;setPointer(e)},{passive:true});
+  cv.addEventListener('touchend',()=>{mouse.down=false},{passive:true});
+  cv.addEventListener('touchmove',setPointer,{passive:true});
+
+  // UI bindings
+  ui.count.addEventListener('input',()=>{params.N=parseInt(ui.count.value,10); sync();});
+  ui.count.addEventListener('change',()=>reset());
+  ui.speed.addEventListener('input',()=>{params.maxSpeed=parseFloat(ui.speed.value); sync();});
+  ui.force.addEventListener('input',()=>{params.maxForce=parseFloat(ui.force.value); sync();});
+  ui.vision.addEventListener('input',()=>{params.vision=parseFloat(ui.vision.value); sync();});
+  ui.sepRad.addEventListener('input',()=>{params.sepRadius=parseFloat(ui.sepRad.value); sync();});
+  ui.sep.addEventListener('input',()=>{params.wSep=parseFloat(ui.sep.value); sync();});
+  ui.ali.addEventListener('input',()=>{params.wAli=parseFloat(ui.ali.value); sync();});
+  ui.coh.addEventListener('input',()=>{params.wCoh=parseFloat(ui.coh.value); sync();});
+  ui.wrap.addEventListener('change',()=>{params.wrap=ui.wrap.checked;});
+  ui.mouse.addEventListener('change',()=>{params.mouse=ui.mouse.checked;});
+  ui.randomize.addEventListener('click',reset);
+  let paused=false; ui.pause.addEventListener('click',()=>{paused=!paused; ui.pause.textContent=paused?'Resume (Space)':'Pause (Space)';});
+  addEventListener('keydown',e=>{ if(e.code==='Space'){ paused=!paused; ui.pause.textContent=paused?'Resume (Space)':'Pause (Space)'; } });
+
+  // Physics helpers
+  function limit(vx,vy,max){
+    const s = Math.hypot(vx,vy);
+    if(s>max){ const k=max/s; return [vx*k, vy*k]; }
+    return [vx,vy];
+  }
+
+  function step(dt){
+    const vR=params.vision, sR=params.sepRadius;
+    for(let i=0;i<boids.length;i++){
+      const b=boids[i];
+      let count=0, ax=0, ay=0, cx=0, cy=0, sx=0, sy=0;
+
+      for(let j=0;j<boids.length;j++){
+        if(i===j) continue;
+        const o=boids[j];
+        let dx=o.x-b.x, dy=o.y-b.y;
+        if(params.wrap){
+          if(dx>W/2)dx-=W; if(dx<-W/2)dx+=W;
+          if(dy>H/2)dy-=H; if(dy<-H/2)dy+=H;
+        }
+        const d2=dx*dx+dy*dy;
+        if(d2<vR*vR){
+          count++;
+          // alignment
+          ax+=o.vx; ay+=o.vy;
+          // cohesion
+          cx+=o.x; cy+=o.y;
+          // separation
+          if(d2<sR*sR){
+            const inv = 1/(Math.sqrt(d2)+0.0001);
+            sx -= dx*inv; sy -= dy*inv;
+          }
+        }
+      }
+
+      let steerX=0, steerY=0;
+      if(count>0){
+        // alignment
+        ax/=count; ay/=count; [ax,ay]=limit(ax,ay,params.maxSpeed);
+        ax -= b.vx; ay -= b.vy; [ax,ay]=limit(ax,ay,params.maxForce);
+        // cohesion
+        cx=(cx/count)-b.x; cy=(cy/count)-b.y; [cx,cy]=limit(cx,cy,params.maxSpeed);
+        cx -= b.vx; cy -= b.vy; [cx,cy]=limit(cx,cy,params.maxForce);
+        // separation
+        [sx,sy]=limit(sx,sy,params.maxSpeed); sx -= b.vx; sy -= b.vy; [sx,sy]=limit(sx,sy,params.maxForce);
+
+        steerX = params.wAli*ax + params.wCoh*cx + params.wSep*sx;
+        steerY = params.wAli*ay + params.wCoh*cy + params.wSep*sy;
+      }
+
+      // Mouse attractor
+      if(params.mouse && mouse.down){
+        let dx=mouse.x-b.x, dy=mouse.y-b.y;
+        if(params.wrap){ if(dx>W/2)dx-=W; if(dx<-W/2)dx+=W; if(dy>H/2)dy-=H; if(dy<-H/2)dy+=H; }
+        const dist = Math.hypot(dx,dy)+1e-6;
+        steerX += dx/dist*0.05; steerY += dy/dist*0.05;
+      }
+
+      b.vx += steerX; b.vy += steerY;
+      [b.vx,b.vy] = limit(b.vx,b.vy,params.maxSpeed);
+      b.x += b.vx; b.y += b.vy;
+
+      if(params.wrap){
+        if(b.x<0) b.x+=W; if(b.x>=W) b.x-=W;
+        if(b.y<0) b.y+=H; if(b.y>=H) b.y-=H;
+      }else{
+        if(b.x<0||b.x>W) b.vx*=-1;
+        if(b.y<0||b.y>H) b.vy*=-1;
+        b.x=Math.max(0,Math.min(W,b.x)); b.y=Math.max(0,Math.min(H,b.y));
+      }
+    }
+  }
+
+  function render(){
+    ctx.fillStyle='rgba(11,15,20,0.35)'; ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle='rgba(90,200,250,0.9)'; ctx.lineWidth=1.2;
+    for(const b of boids){
+      const a=Math.atan2(b.vy,b.vx);
+      const len=8, w=4;
+      ctx.beginPath();
+      ctx.moveTo(b.x + Math.cos(a)*len, b.y + Math.sin(a)*len);
+      ctx.lineTo(b.x + Math.cos(a+2.6)*w, b.y + Math.sin(a+2.6)*w);
+      ctx.lineTo(b.x + Math.cos(a-2.6)*w, b.y + Math.sin(a-2.6)*w);
+      ctx.closePath();
+      ctx.stroke();
+    }
+  }
+
+  // Loop + FPS
+  let last=performance.now(), acc=0, frames=0, paused=false;
+  function loop(t){
+    const dt=Math.min(0.05,(t-last)/1000); last=t;
+    if(!paused){ step(dt); render(); }
+    frames++; acc+=dt;
+    if(acc>0.5){ $('fps').textContent=Math.round(frames/acc); frames=0; acc=0; }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
