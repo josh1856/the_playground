@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>QR & Link Builder</title>
+<style>
+  :root{--bg:#0b0f14;--panel:#101722;--ink:#e6edf3;--muted:#9aa4b2;--accent:#5ac8fa}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;-webkit-text-size-adjust:100%}
+  header{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #1c2330;background:linear-gradient(180deg,#0f141d,#0c1118)}
+  header h1{margin:0;font-size:16px}
+  a.back{color:#9aa4b2;text-decoration:none}
+  .wrap{max-width:980px;margin:12px auto;padding:0 12px;display:grid;grid-template-columns:1fr 360px;gap:12px}
+  .card{background:#101722;border:1px solid #263247;border-radius:12px;padding:12px}
+  label{display:block;color:var(--muted);font-size:12px;margin:10px 0 6px}
+  input,select,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #263247;background:#0f1522;color:var(--ink)}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  button{background:#0f1522;color:var(--ink);border:1px solid #263247;padding:9px 12px;border-radius:10px;cursor:pointer}
+  button.primary{border-color:var(--accent)}
+  #qrBox{display:flex;align-items:center;justify-content:center;min-height:340px}
+  @media (max-width:760px){ .wrap{grid-template-columns:1fr} #qrBox{min-height:260px} }
+</style>
+</head>
+<body>
+<header>
+  <h1>QR & Link Builder</h1>
+  <a class="back" href="index.html">⟵ Back</a>
+</header>
+
+<div class="wrap">
+  <!-- Left: form -->
+  <div class="card">
+    <label>Type</label>
+    <select id="type">
+      <option value="url">URL (with optional UTM)</option>
+      <option value="wifi">Wi-Fi (SSID/Password)</option>
+      <option value="vcard">vCard contact</option>
+    </select>
+
+    <div id="form-url">
+      <label>Base URL</label>
+      <input id="url" placeholder="https://example.com">
+      <details style="margin-top:10px">
+        <summary style="cursor:pointer;color:#9aa4b2">Add UTM tags (optional)</summary>
+        <div class="row">
+          <div><label>utm_source</label><input id="utm_source" placeholder="instagram"></div>
+          <div><label>utm_medium</label><input id="utm_medium" placeholder="bio"></div>
+        </div>
+        <div class="row">
+          <div><label>utm_campaign</label><input id="utm_campaign" placeholder="spring_sale"></div>
+          <div><label>utm_content</label><input id="utm_content" placeholder="button"></div>
+        </div>
+      </details>
+    </div>
+
+    <div id="form-wifi" style="display:none">
+      <div class="row">
+        <div><label>SSID (network name)</label><input id="wifi_ssid" placeholder="MyWiFi"></div>
+        <div><label>Security</label>
+          <select id="wifi_auth">
+            <option>WPA</option><option>WEP</option><option>nopass</option>
+          </select>
+        </div>
+      </div>
+      <label>Password</label><input id="wifi_pass" placeholder="••••••••">
+      <label><input type="checkbox" id="wifi_hidden"> Hidden network</label>
+    </div>
+
+    <div id="form-vcard" style="display:none">
+      <div class="row">
+        <div><label>First name</label><input id="vc_fn" placeholder="Alex"></div>
+        <div><label>Last name</label><input id="vc_ln" placeholder="Rivers"></div>
+      </div>
+      <div class="row">
+        <div><label>Organization</label><input id="vc_org" placeholder="The Playground LLC"></div>
+        <div><label>Title</label><input id="vc_title" placeholder="Owner"></div>
+      </div>
+      <div class="row">
+        <div><label>Phone</label><input id="vc_tel" placeholder="+1 555 123 4567"></div>
+        <div><label>Email</label><input id="vc_email" placeholder="you@example.com"></div>
+      </div>
+      <label>Website</label><input id="vc_url" placeholder="https://your-site.com">
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <div>
+        <label>QR Size (px)</label>
+        <input id="size" type="range" min="120" max="720" value="320">
+      </div>
+      <div>
+        <label>Margin</label>
+        <input id="margin" type="range" min="0" max="12" value="2">
+      </div>
+    </div>
+
+    <div class="actions" style="margin-top:12px">
+      <button id="build" class="primary">Build</button>
+      <button id="downloadPng">Download PNG</button>
+      <button id="downloadSvg">Download SVG</button>
+      <button id="copyLink">Copy Link/Text</button>
+    </div>
+  </div>
+
+  <!-- Right: preview -->
+  <div class="card" id="qrBox">
+    <div id="qr"></div>
+  </div>
+</div>
+
+<!-- tiny QR lib -->
+<script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
+<script>
+(() => {
+  const $=id=>document.getElementById(id);
+  const type=$('type'), size=$('size'), margin=$('margin');
+  const sections={url:$('form-url'), wifi:$('form-wifi'), vcard:$('form-vcard')};
+  const qrel=$('qr');
+  let qr;
+
+  function show(section){
+    for(const k in sections){ sections[k].style.display = (k===section)?'block':'none'; }
+  }
+  type.addEventListener('change', ()=> show(type.value));
+  show(type.value);
+
+  function buildPayload(){
+    if(type.value==='url'){
+      try{
+        const base = $('url').value.trim();
+        const u = new URL(base);
+        const utm = ['utm_source','utm_medium','utm_campaign','utm_content'];
+        utm.forEach(k=>{
+          const v = $(k).value.trim(); if(v) u.searchParams.set(k,v);
+        });
+        return u.toString();
+      }catch(e){ return $('url').value.trim(); }
+    }
+    if(type.value==='wifi'){
+      // WIFI:T:WPA;S:mynetwork;P:mypass;H:true;;
+      const T=$('wifi_auth').value, S=esc($('wifi_ssid').value), P=esc($('wifi_pass').value);
+      const H=$('wifi_hidden').checked;
+      return `WIFI:T:${T};S:${S};${T!=='nopass'?`P:${P};`:''}${H?'H:true;':''};`;
+    }
+    // vCard 3.0
+    const fn = `${$('vc_fn').value} ${$('vc_ln').value}`.trim();
+    const v = [
+      'BEGIN:VCARD','VERSION:3.0',
+      `N:${esc($('vc_ln').value)};${esc($('vc_fn').value)};;;`,
+      `FN:${esc(fn)}`,
+      $('vc_org').value?`ORG:${esc($('vc_org').value)}`:'',
+      $('vc_title').value?`TITLE:${esc($('vc_title').value)}`:'',
+      $('vc_tel').value?`TEL;TYPE=CELL:${esc($('vc_tel').value)}`:'',
+      $('vc_email').value?`EMAIL:${esc($('vc_email').value)}`:'',
+      $('vc_url').value?`URL:${esc($('vc_url').value)}`:'',
+      'END:VCARD'
+    ].filter(Boolean).join('\n');
+    return v;
+  }
+
+  function render(){
+    qrel.innerHTML=''; // clear
+    qr = new QRCode(qrel, {
+      text: buildPayload(),
+      width: parseInt(size.value,10),
+      height: parseInt(size.value,10),
+      correctLevel: QRCode.CorrectLevel.M
+    });
+    // adjust margin by padding QR container
+    qrel.style.padding = margin.value+'px';
+  }
+
+  function downloadPNG(){
+    const img = qrel.querySelector('img') || qrel.querySelector('canvas');
+    if(!img) return;
+    const url = img.tagName==='IMG' ? img.src : img.toDataURL('image/png');
+    triggerDownload(url, 'qr.png');
+  }
+  function downloadSVG(){
+    // qrcodejs doesn’t output SVG, but we can redraw into SVG path for simple matrix
+    const canvas = qrel.querySelector('canvas');
+    if(!canvas){ alert('Render once first.'); return; }
+    const ctx = canvas.getContext('2d');
+    const {width,height} = canvas;
+    const imgData = ctx.getImageData(0,0,width,height).data;
+    // Binary threshold by alpha
+    let d = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="white"/>`;
+    for(let y=0;y<height;y++){
+      for(let x=0;x<width;x++){
+        const a = imgData[(y*width + x)*4 + 3];
+        if(a>128){ d += `<rect x="${x}" y="${y}" width="1" height="1" fill="black"/>`; }
+      }
+    }
+    d += `</svg>`;
+    const blob = new Blob([d], {type:'image/svg+xml'});
+    const url = URL.createObjectURL(blob);
+    triggerDownload(url, 'qr.svg');
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+  }
+
+  function copyLink(){
+    const text = buildPayload();
+    navigator.clipboard?.writeText(text);
+    alert('Copied to clipboard!');
+  }
+
+  function triggerDownload(url, filename){
+    const a=document.createElement('a'); a.href=url; a.download=filename; a.click();
+  }
+  const esc = s => String(s||'').replace(/([;,:\\"])/g,'\\$1');
+
+  $('build').addEventListener('click', render);
+  $('downloadPng').addEventListener('click', downloadPNG);
+  $('downloadSvg').addEventListener('click', downloadSVG);
+  $('copyLink').addEventListener('click', copyLink);
+
+  // First render
+  render();
+})();
+</script>
+</body>
+</html>
