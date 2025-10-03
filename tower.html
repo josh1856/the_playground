@@ -6,7 +6,8 @@
 <title>Tower Forge — Touch Defense</title>
 <style>
   :root{--bg:#0b0f14;--panel:#101722;--ink:#e6edf3;--muted:#9aa4b2;--accent:#5ac8fa}
-  *{box-sizing:border-box} html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
   .wrap{display:grid;grid-template-rows:auto 1fr auto;min-height:100vh}
   header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #1c2330;background:linear-gradient(180deg,#0f141d,#0c1118)}
   .stats{display:flex;gap:8px;flex-wrap:wrap}
@@ -33,7 +34,11 @@
     </div>
   </header>
 
-  <div id="stage"><canvas id="cv"></canvas><div id="hint">Tap a build tile to place a tower • Pinch to zoom • Drag to pan</div><div id="toast"></div></div>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hint">Tap a build tile to place a tower • Pinch to zoom • Drag to pan</div>
+    <div id="toast"></div>
+  </div>
 
   <footer>
     <button id="t_basic" class="primary">Basic ($50)</button>
@@ -46,60 +51,83 @@
 </div>
 
 <script>
-(() => {
-  window.onerror=(m)=>alert('Error: '+m); // quick debug on mobile
+(()=> {
+  // Show errors on iPhone while we iterate
+  window.onerror = (m,s,l)=>alert('Error: '+m+(s?('\n'+s+':'+l):''));
 
-  // ===== Canvas / world coords with pan/zoom =====
-  const cv=document.getElementById('cv'), ctx=cv.getContext('2d',{alpha:false});
-  let W=0,H=0,dpr=Math.min(2,window.devicePixelRatio||1);
+  /* ---------- DOM helpers (declare first to avoid Safari TDZ) ---------- */
+  const byId = (id)=>document.getElementById(id);
+  const ui = {
+    hearts: byId('hearts'),
+    coins : byId('coins'),
+    wave  : byId('wave'),
+    fps   : byId('fps'),
+    toast : byId('toast')
+  };
+  const toast = (msg)=>{
+    ui.toast.textContent = msg;
+    ui.toast.classList.add('show');
+    setTimeout(()=>ui.toast.classList.remove('show'), 1200);
+  };
+
+  /* ---------- Canvas / world coords ---------- */
+  const cv = byId('cv');
+  const ctx = cv.getContext('2d', {alpha:false});
+  let W=0, H=0, dpr=Math.min(2, window.devicePixelRatio||1);
   let zoom=1, panX=0, panY=0;
-  function resize(){
-    W=cv.clientWidth=cv.parentElement.clientWidth;
-    H=cv.clientHeight=Math.max(360,window.innerHeight-140);
-    cv.width=W*dpr; cv.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
-    centerBoard(); // ensure visible on iPhone
-  }
-  addEventListener('resize',resize,{passive:true}); resize();
-  const toWorld=(x,y)=>[(x-panX)/zoom,(y-panY)/zoom];
 
-  // ===== Map: 18x10 grid =====
+  function toWorld(x,y){ return [(x-panX)/zoom, (y-panY)/zoom]; }
+  function resize(){
+    W = cv.clientWidth = cv.parentElement.clientWidth;
+    H = cv.clientHeight = Math.max(360, window.innerHeight - 140);
+    cv.width = W*dpr; cv.height = H*dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    centerBoard();
+  }
+  addEventListener('resize', resize, {passive:true});
+  resize();
+
+  /* ---------- Map ---------- */
   const COLS=18, ROWS=10, TS=64;
-  const grid=Array.from({length:ROWS},()=>Array(COLS).fill(0));
-  const path=[];
+  const grid = Array.from({length:ROWS},()=>Array(COLS).fill(0));
+  const path = [];
   (function makePath(){
-    let r=1,c=0,dir=1;
+    let r=1, c=0, dir=1;
     while(c<COLS){
       grid[r][c]=1; path.push({c,r});
       r+=dir;
-      if(r===ROWS-2 || r===1){ grid[r][c]=1; path.push({c,r}); c++; if(c<COLS){ grid[r][c]=1; path.push({c,r}); } dir*=-1; }
+      if(r===ROWS-2 || r===1){
+        grid[r][c]=1; path.push({c,r});
+        c++; if(c<COLS){ grid[r][c]=1; path.push({c,r}); }
+        dir*=-1;
+      }
     }
   })();
-  const startCell=path[0], endCell=path[path.length-1];
-
-  // center board in view
+  const startCell = path[0];
   function centerBoard(){
-    const boardW=COLS*TS, boardH=ROWS*TS;
-    panX=(W-boardW)/2; panY=(H-boardH)/2;
+    const bw=COLS*TS, bh=ROWS*TS;
+    panX = (W-bw)/2;
+    panY = (H-bh)/2;
   }
 
-  // ===== Game state =====
-  let coins=150,lives=20,wave=1,running=false;
+  /* ---------- Game state ---------- */
+  let coins=150, lives=20, wave=1, running=false;
   const towers=[], bullets=[], mobs=[], particles=[], ripples=[];
-  const ui={hearts:$('#hearts'),coins:$('#coins'),wave:$('#wave'),fps:$('#fps'),toast:$('#toast')};
-  function $(id){return document.getElementById(id)}
-  function toast(msg){ui.toast.textContent=msg; ui.toast.classList.add('show'); setTimeout(()=>ui.toast.classList.remove('show'),1200)}
-  function addRipple(sx,sy){ ripples.push({sx,sy,t:0}); }
+  const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 
-  // ===== Towers =====
-  const T_DEF={
-    basic:{cost:50,range:150,rof:0.6,dmg:14,color:'#74c0fc'},
-    slow :{cost:60,range:130,rof:0.8,dmg:8, slow:0.45,sDur:1.4,color:'#9ae6ff'},
-    splash:{cost:80,range:120,rof:0.9,dmg:10,splash:70,color:'#ffd166'}
+  /* ---------- Towers ---------- */
+  const T_DEF = {
+    basic : {cost:50, range:150, rof:0.6, dmg:14, color:'#74c0fc'},
+    slow  : {cost:60, range:130, rof:0.8, dmg:8,  slow:0.45, sDur:1.4, color:'#9ae6ff'},
+    splash: {cost:80, range:120, rof:0.9, dmg:10, splash:70, color:'#ffd166'}
   };
   let selected='basic', selectedTower=null;
-  $('#t_basic').onclick=()=>{selected='basic'; selectTower(null);};
-  $('#t_slow').onclick =()=>{selected='slow'; selectTower(null);};
-  $('#t_splash').onclick=()=>{selected='splash'; selectTower(null);};
+
+  byId('t_basic').onclick  = ()=>{ selected='basic';  selectTower(null); };
+  byId('t_slow').onclick   = ()=>{ selected='slow';   selectTower(null); };
+  byId('t_splash').onclick = ()=>{ selected='splash'; selectTower(null); };
+  byId('sell').onclick     = ()=> sellTower(selectedTower);
+  byId('start').onclick    = ()=>{ if(!running) spawnWave(1); };
 
   function addTower(col,row){
     if(grid[row][col]!==0){ toast('Can’t build on path'); return; }
@@ -112,123 +140,165 @@
   }
   function sellTower(t){
     if(!t) return;
-    coins+=Math.round(T_DEF[t.type].cost*0.6); ui.coins.textContent=coins;
-    grid[t.row][t.col]=0; towers.splice(towers.indexOf(t),1); selectedTower=null; toast('Sold');
+    coins += Math.round(T_DEF[t.type].cost*0.6);
+    ui.coins.textContent=coins;
+    grid[t.row][t.col]=0;
+    towers.splice(towers.indexOf(t),1);
+    selectedTower=null;
+    toast('Sold');
   }
-  $('#sell').onclick=()=>sellTower(selectedTower);
   function selectTower(t){ selectedTower=t; }
 
-  // ===== Mobs =====
-  function spawnWave(mult=1){
-    running=true;
-    const n=Math.round(10+wave*2.5*mult); let i=0;
-    const timer=setInterval(()=>{
-      mobs.push(makeMob(60+wave*22, 55+Math.min(120,wave*2)));
-      if(++i>=n) clearInterval(timer);
-    },380);
-  }
+  /* ---------- Mobs ---------- */
   function makeMob(hp,speed){
     const x=startCell.c*TS+TS/2, y=startCell.r*TS+TS/2;
     return {x,y,v:speed,hp,max:hp,cellIndex:0,slowT:0};
   }
+  function spawnWave(mult=1){
+    running=true;
+    const n=Math.round(10 + wave*2.5*mult);
+    let i=0;
+    const timer=setInterval(()=>{
+      mobs.push(makeMob(60+wave*22, 55+Math.min(120, wave*2)));
+      if(++i>=n) clearInterval(timer);
+    }, 380);
+  }
 
-  // ===== Input =====
-  let dragging=false,lastTouchDist=0,lastX=0,lastY=0;
-  cv.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;});
-  cv.addEventListener('pointerup',e=>{
-    if(Math.hypot(e.clientX-lastX,e.clientY-lastY)<8){ onTap(e.clientX,e.clientY); addRipple(e.clientX,e.clientY); }
+  /* ---------- Input (tap/pan/zoom) ---------- */
+  let dragging=false, lastTouchDist=0, lastX=0, lastY=0;
+  function addRipple(sx,sy){ ripples.push({sx,sy,t:0}); }
+
+  cv.addEventListener('pointerdown', e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; });
+  cv.addEventListener('pointerup',   e=>{
+    if(Math.hypot(e.clientX-lastX, e.clientY-lastY)<8){ onTap(e.clientX,e.clientY); addRipple(e.clientX,e.clientY); }
     dragging=false;
   });
-  cv.addEventListener('pointermove',e=>{ if(dragging){ panX+=e.clientX-lastX; panY+=e.clientY-lastY; lastX=e.clientX; lastY=e.clientY; }});
-  cv.addEventListener('touchstart',e=>{ if(e.touches.length===1){ const t=e.touches[0]; onTap(t.clientX,t.clientY); addRipple(t.clientX,t.clientY);}},{passive:true});
-  cv.addEventListener('touchmove',e=>{
+  cv.addEventListener('pointermove', e=>{
+    if(dragging){ panX+=e.clientX-lastX; panY+=e.clientY-lastY; lastX=e.clientX; lastY=e.clientY; }
+  });
+  cv.addEventListener('touchstart',  e=>{
+    if(e.touches.length===1){ const t=e.touches[0]; onTap(t.clientX,t.clientY); addRipple(t.clientX,t.clientY); }
+  }, {passive:true});
+  cv.addEventListener('touchmove',   e=>{
     if(e.touches.length===2){
       const dx=e.touches[0].clientX-e.touches[1].clientX, dy=e.touches[0].clientY-e.touches[1].clientY;
-      const d=Math.hypot(dx,dy); if(lastTouchDist){ const k=d/lastTouchDist; zoom=Math.max(0.6,Math.min(2,zoom*k)); }
+      const d=Math.hypot(dx,dy);
+      if(lastTouchDist){ const k=d/lastTouchDist; zoom=Math.max(0.6, Math.min(2, zoom*k)); }
       lastTouchDist=d;
     }else if(e.touches.length===1 && dragging){
       const t=e.touches[0]; panX+=t.clientX-lastX; panY+=t.clientY-lastY; lastX=t.clientX; lastY=t.clientY;
     }
-  },{passive:true});
-  cv.addEventListener('touchend',()=>{lastTouchDist=0;},{passive:true});
+  }, {passive:true});
+  cv.addEventListener('touchend', ()=>{ lastTouchDist=0; }, {passive:true});
 
   function onTap(cx,cy){
     const [wx,wy]=toWorld(cx,cy);
     const col=Math.floor(wx/TS), row=Math.floor(wy/TS);
     if(col<0||col>=COLS||row<0||row>=ROWS) return;
+
     const existing=towers.find(t=>t.col===col && t.row===row);
     if(existing){
       selectTower(existing);
       const upCost=Math.round(T_DEF[existing.type].cost*0.7*existing.lvl);
       if(coins>=upCost){
         coins-=upCost; ui.coins.textContent=coins;
-        existing.lvl++; existing.def={...existing.def,dmg:existing.def.dmg*1.25,range:existing.def.range+8};
+        existing.lvl++;
+        existing.def = {...existing.def, dmg:existing.def.dmg*1.25, range:existing.def.range+8};
         toast('Upgraded');
-      }else{ toast('Tap SELL to refund'); }
+      }else{
+        toast('Tap SELL to refund');
+      }
       return;
     }
     addTower(col,row);
   }
 
-  // ===== Physics =====
-  const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  /* ---------- Combat ---------- */
   function makeBurst(x,y,color){ return {x,y,t:0,color}; }
   function makeBullet(x,y,tx,ty,tower){
     const a=Math.atan2(ty-y,tx-x), sp=360;
-    return {x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,dmg:tower.def.dmg*tower.lvl,splash:tower.def.splash||0,slow:tower.def.slow?{k:tower.def.slow,dur:tower.def.sDur}:null,life:1.2,color:tower.def.color};
+    return {x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,dmg:tower.def.dmg*tower.lvl,
+            splash:tower.def.splash||0,slow:tower.def.slow?{k:tower.def.slow,dur:tower.def.sDur}:null,
+            life:1.2,color:tower.def.color};
   }
 
   function update(dt){
     // mobs follow path
     for(let i=mobs.length-1;i>=0;i--){
-      const m=mobs[i], seg=path[m.cellIndex+1];
-      if(!seg){ mobs.splice(i,1); lives--; ui.hearts.textContent=lives; particles.push(makeBurst(m.x,m.y,'#ff6b6b')); if(lives<=0) resetGame(); continue; }
+      const m=mobs[i];
+      const seg = path[m.cellIndex+1];
+      if(!seg){ // reached end
+        mobs.splice(i,1);
+        lives--; ui.hearts.textContent=lives;
+        particles.push(makeBurst(m.x,m.y,'#ff6b6b'));
+        if(lives<=0) resetGame();
+        continue;
+      }
       const tx=seg.c*TS+TS/2, ty=seg.r*TS+TS/2;
-      const s=(m.slowT>0?0.5:1)*m.v*dt, dx=tx-m.x, dy=ty-m.y, d=Math.hypot(dx,dy);
-      if(d<s){ m.x=tx; m.y=ty; m.cellIndex++; } else { m.x+=dx/d*s; m.y+=dy/d*s; }
+      const s=(m.slowT>0?0.5:1)*m.v*dt;
+      const dx=tx-m.x, dy=ty-m.y, d=Math.hypot(dx,dy);
+      if(d<s){ m.x=tx; m.y=ty; m.cellIndex++; }
+      else    { m.x+=dx/d*s; m.y+=dy/d*s; }
       if(m.slowT>0) m.slowT-=dt;
-      if(m.hp<=0){ coins+=8; ui.coins.textContent=coins; particles.push(makeBurst(m.x,m.y,'#a0ff90')); mobs.splice(i,1); }
+      if(m.hp<=0){
+        coins+=8; ui.coins.textContent=coins;
+        particles.push(makeBurst(m.x,m.y,'#a0ff90'));
+        mobs.splice(i,1);
+      }
     }
 
     // towers fire
     for(const t of towers){
       t.t+=dt; const def=t.def;
       if(t.t>=def.rof){
-        let best=null,bd=1e9; for(const m of mobs){ const d=dist(t,m); if(d<=def.range && d<bd){ best=m; bd=d; } }
+        let best=null, bd=1e9;
+        for(const m of mobs){ const d=dist(t,m); if(d<=def.range && d<bd){ best=m; bd=d; } }
         if(best){ bullets.push(makeBullet(t.x,t.y,best.x,best.y,t)); t.t=0; }
       }
     }
 
     // bullets
     for(let i=bullets.length-1;i>=0;i--){
-      const b=bullets[i]; b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt; if(b.life<=0){ bullets.splice(i,1); continue; }
-      let hit=null,minD=12; for(const m of mobs){ const d=dist(b,m); if(d<minD){ hit=m; minD=d; break; } }
+      const b=bullets[i];
+      b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
+      if(b.life<=0){ bullets.splice(i,1); continue; }
+      let hit=null, minD=12;
+      for(const m of mobs){ const d=dist(b,m); if(d<minD){ hit=m; minD=d; break; } }
       if(hit){
         if(b.splash>0){
-          for(const m of mobs){ const d=dist(b,m); if(d<=b.splash){ m.hp-=b.dmg*(1-d/b.splash*0.6); if(b.slow){ m.slowT=Math.max(m.slowT,b.slow.dur); m.v=Math.max(40,m.v*b.slow.k); } } }
+          for(const m of mobs){
+            const d=dist(b,m);
+            if(d<=b.splash){
+              m.hp -= b.dmg*(1-d/b.splash*0.6);
+              if(b.slow){ m.slowT=Math.max(m.slowT,b.slow.dur); m.v=Math.max(40,m.v*b.slow.k); }
+            }
+          }
         }else{
-          hit.hp-=b.dmg; if(b.slow){ hit.slowT=Math.max(hit.slowT,b.slow.dur); hit.v=Math.max(40,hit.v*b.slow.k); }
+          hit.hp -= b.dmg;
+          if(b.slow){ hit.slowT=Math.max(hit.slowT,b.slow.dur); hit.v=Math.max(40,hit.v*b.slow.k); }
         }
-        particles.push(makeBurst(b.x,b.y,b.color)); bullets.splice(i,1);
+        particles.push(makeBurst(b.x,b.y,b.color));
+        bullets.splice(i,1);
       }
     }
 
     // particles
-    for(let i=particles.length-1;i>=0;i--){ particles[i].t+=dt; if(particles[i].t>0.6) particles.splice(i,1); }
+    for(let i=particles.length-1;i>=0;i--){
+      particles[i].t+=dt; if(particles[i].t>0.6) particles.splice(i,1);
+    }
   }
 
-  // ===== Render =====
+  /* ---------- Render ---------- */
   function draw(){
     ctx.clearRect(0,0,W,H);
     ctx.save(); ctx.translate(panX,panY); ctx.scale(zoom,zoom);
 
-    // board (brighter so it’s obvious on iPhone)
+    // board (brighter tiles + subtle grid)
     for(let r=0;r<ROWS;r++){
       for(let c=0;c<COLS;c++){
         const x=c*TS,y=r*TS;
         ctx.fillStyle = (grid[r][c]===1) ? '#1f2b3e' : '#121b2a';
         ctx.fillRect(x,y,TS-1,TS-1);
-        // subtle grid lines
         ctx.strokeStyle='rgba(255,255,255,0.05)'; ctx.strokeRect(x+0.5,y+0.5,TS-1,TS-1);
       }
     }
@@ -255,7 +325,8 @@
 
     // bullets
     for(const b of bullets){
-      ctx.strokeStyle=b.color; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(b.x-b.vx*0.05,b.y-b.vy*0.05); ctx.lineTo(b.x,b.y); ctx.stroke();
+      ctx.strokeStyle=b.color; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(b.x-b.vx*0.05,b.y-b.vy*0.05); ctx.lineTo(b.x,b.y); ctx.stroke();
       ctx.fillStyle=b.color; ctx.beginPath(); ctx.arc(b.x,b.y,2.5,0,Math.PI*2); ctx.fill();
     }
 
@@ -267,30 +338,33 @@
     }
     ctx.restore();
 
-    // tap ripples (screen space so you see it immediately)
+    // tap ripples (drawn in screen space so they’re obvious)
     for(let i=ripples.length-1;i>=0;i--){
       const r=ripples[i]; r.t+=0.02; const a=1-r.t; if(a<=0){ ripples.splice(i,1); continue; }
       const k=20+r.t*40; ctx.save(); ctx.strokeStyle=`rgba(90,200,250,${a})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(r.sx,r.sy,k,0,Math.PI*2); ctx.stroke(); ctx.restore();
     }
   }
 
-  // ===== Loop / FPS =====
-  let last=performance.now(),acc=0,frames=0;
+  /* ---------- Loop / FPS ---------- */
+  let last=performance.now(), acc=0, frames=0;
   function tick(t){
     const dt=Math.min(0.05,(t-last)/1000); last=t;
     if(running) update(dt); draw();
-    frames++; acc+=dt; if(acc>0.4){ $('#fps').textContent=Math.round(frames/acc); frames=0; acc=0; }
+    frames++; acc+=dt; if(acc>0.4){ ui.fps.textContent=Math.round(frames/acc); frames=0; acc=0; }
     requestAnimationFrame(tick);
-  } requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
 
-  // ===== Wave control & reset =====
-  $('#start').onclick=()=>{ if(!running) spawnWave(1); };
-  function resetGame(){ running=false; toast('Game over! Tap Start to try again'); lives=20; coins=150; wave=1; $('#hearts').textContent=lives; $('#coins').textContent=coins; $('#wave').textContent=wave; mobs.length=towers.length=bullets.length=particles.length=0; for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++) if(grid[r][c]===2) grid[r][c]=0; }
-
-  // Auto-start first wave after 3s (mobile UX)
-  setTimeout(()=>{ if(!running){ spawnWave(1); toast('Auto-starting wave 1'); } },3000);
-
-  function $(id){ return document.getElementById(id) }
+  /* ---------- Reset & auto-start ---------- */
+  function resetGame(){
+    running=false; toast('Game over! Tap Start to try again');
+    lives=20; coins=150; wave=1;
+    ui.hearts.textContent=lives; ui.coins.textContent=coins; ui.wave.textContent=wave;
+    mobs.length=towers.length=bullets.length=particles.length=0;
+    for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) if(grid[r][c]===2) grid[r][c]=0;
+  }
+  // Auto-start first wave after 3s so it never feels “dead”
+  setTimeout(()=>{ if(!running){ spawnWave(1); toast('Auto-starting wave 1'); } }, 3000);
 })();
 </script>
 </body>
