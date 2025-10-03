@@ -7,9 +7,19 @@
 <style>
   :root { --bg:#0b0f14; --panel:#101722; --ink:#e6edf3; --muted:#9aa4b2; --accent:#5ac8fa; }
   *{box-sizing:border-box}
-  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  html,body{
+    height:100%; margin:0; background:var(--bg); color:var(--ink);
+    font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+    -webkit-text-size-adjust:100%;
+  }
+
+  /* Desktop layout */
   .wrap{display:grid;grid-template-columns:1fr 320px;grid-template-rows:auto 1fr;grid-template-areas:"h h" "c s";height:100%}
-  header{grid-area:h;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #1c2330;background:linear-gradient(180deg,#0f141d,#0c1118)}
+  header{
+    grid-area:h;display:flex;align-items:center;justify-content:space-between;
+    padding:10px 14px;border-bottom:1px solid #1c2330;
+    background:linear-gradient(180deg,#0f141d,#0c1118); position:sticky; top:0; z-index:5;
+  }
   header h1{margin:0;font-size:16px;letter-spacing:.3px}
   header small{color:var(--muted)}
   #stage{grid-area:c;position:relative}
@@ -19,11 +29,32 @@
   .row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:6px 0}
   input[type="range"]{width:100%;accent-color:var(--accent)}
   input[type="checkbox"]{accent-color:var(--accent);transform:translateY(1px)}
-  button{background:#0f1522;color:var(--ink);border:1px solid #263247;padding:7px 10px;border-radius:8px;cursor:pointer;transition:.12s ease background,.12s ease transform}
+  button{background:#0f1522;color:var(--ink);border:1px solid #263247;padding:9px 12px;border-radius:10px;cursor:pointer;transition:.12s ease background,.12s ease transform}
   button:hover{background:#141c2d} button:active{transform:translateY(1px)}
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#0d1421;border:1px solid #1f2a3b;color:var(--muted);font-size:12px}
   .help{color:var(--muted);font-size:12px;line-height:1.6}
   a.back{color:#9aa4b2;text-decoration:none}
+
+  /* 📱 Mobile layout */
+  @media (max-width:760px){
+    .wrap{
+      grid-template-columns:1fr;
+      grid-template-rows:auto auto auto;
+      grid-template-areas:
+        "h"
+        "c"
+        "s";
+      height:auto;
+    }
+    #stage{height:62vh;min-height:300px}
+    canvas{height:100%}
+    aside{border-left:none;border-top:1px solid #1c2330;padding:14px 14px 40px}
+    .row{grid-template-columns:1fr auto}
+    .help{font-size:13px}
+    input[type="range"]{height:34px}
+    button{padding:12px 14px;border-radius:12px}
+    header h1{font-size:18px}
+  }
 </style>
 </head>
 <body>
@@ -71,8 +102,7 @@
     <div class="help">
       • Tap/drag to attract particles (touch & mouse).<br>
       • Space to pause/resume. R to reset.<br>
-      • “Galaxy” creates two counter-rotating swirls. “Repel Field” flips gravity sign.<br>
-      • Trails are drawn by fading the canvas each frame.
+      • “Galaxy” creates two swirls. “Repel Field” flips gravity sign.
     </div>
   </aside>
 </div>
@@ -107,7 +137,7 @@
   }
   window.addEventListener('resize', resize); resize();
 
-  const rand = (a,b)=>a+Math.random()*(b-a); const TAU=Math.PI*2;
+  const rand = (a,b)=>a+Math.random()*(b-a), TAU=Math.PI*2;
   let params = {
     N: parseInt(ui.count.value,10),
     G: parseFloat(ui.g.value),
@@ -143,7 +173,7 @@
   }
   reset();
 
-  // Input: pointer + touch
+  // Input
   const mouse = {x:0,y:0,down:false};
   function setPointer(e){
     const rect = canvas.getBoundingClientRect();
@@ -157,7 +187,7 @@
   canvas.addEventListener('touchend',   e=>{ mouse.down=false; }, {passive:true});
   canvas.addEventListener('touchmove',  setPointer, {passive:true});
 
-  // UI bindings
+  // UI
   ui.count.addEventListener('input', ()=>{ params.N=parseInt(ui.count.value,10); sync(); });
   ui.count.addEventListener('change', ()=> reset());
   ui.g.addEventListener('input', ()=>{ params.G=parseFloat(ui.g.value); sync(); });
@@ -237,11 +267,10 @@
 
   // Render
   function render(){
-    // Trail
     const a = Math.max(0, Math.min(1, params.trail));
-    if(a>0){ ctx.fillStyle=`rgba(11,15,20,${a})`; ctx.fillRect(0,0,W,H); } else { ctx.clearRect(0,0,W,H); }
+    if(a>0){ ctx.fillStyle=`rgba(11,15,20,${a})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
+    else { ctx.clearRect(0,0,canvas.width,canvas.height); }
 
-    // Links
     const L2 = params.link*params.link;
     if(params.link>0){
       ctx.lineWidth=1;
@@ -261,13 +290,12 @@
       }
     }
 
-    // Particles
     ctx.fillStyle='#c9e5ff';
     const r=params.size;
     for(const p of parts){ ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill(); }
   }
 
-  // Main loop + FPS
+  // Loop
   let last=performance.now(), frames=0, acc=0, paused=false;
   function tick(t){
     const dt = Math.min(0.05,(t-last)/1000)*params.dt; last=t;
