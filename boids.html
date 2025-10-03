@@ -7,9 +7,19 @@
 <style>
   :root{--bg:#0b0f14;--panel:#101722;--ink:#e6edf3;--muted:#9aa4b2;--accent:#5ac8fa}
   *{box-sizing:border-box}
-  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  html,body{
+    height:100%;margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+    -webkit-text-size-adjust:100%;
+  }
+
+  /* Desktop */
   .wrap{display:grid;grid-template-columns:1fr 320px;grid-template-rows:auto 1fr;grid-template-areas:"h h" "c s";height:100%}
-  header{grid-area:h;display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #1c2330;background:linear-gradient(180deg,#0f141d,#0c1118)}
+  header{
+    grid-area:h;display:flex;justify-content:space-between;align-items:center;
+    padding:10px 14px;border-bottom:1px solid #1c2330;
+    background:linear-gradient(180deg,#0f141d,#0c1118); position:sticky; top:0; z-index:5;
+  }
   header h1{margin:0;font-size:16px;letter-spacing:.3px}
   header small{color:var(--muted)}
   #stage{grid-area:c;position:relative}
@@ -19,10 +29,30 @@
   .row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:6px 0}
   input[type=range]{width:100%;accent-color:var(--accent)}
   input[type=checkbox]{accent-color:var(--accent);transform:translateY(1px)}
-  button{background:#0f1522;color:var(--ink);border:1px solid #263247;padding:7px 10px;border-radius:8px;cursor:pointer;transition:.12s ease background,.12s ease transform}
+  button{background:#0f1522;color:var(--ink);border:1px solid #263247;padding:9px 12px;border-radius:10px;cursor:pointer;transition:.12s ease background,.12s ease transform}
   button:hover{background:#141c2d} button:active{transform:translateY(1px)}
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#0d1421;border:1px solid #1f2a3b;color:var(--muted);font-size:12px}
   a.back{color:#9aa4b2;text-decoration:none}
+
+  /* 📱 Mobile */
+  @media (max-width:760px){
+    .wrap{
+      grid-template-columns:1fr;
+      grid-template-rows:auto auto auto;
+      grid-template-areas:
+        "h"
+        "c"
+        "s";
+      height:auto;
+    }
+    #stage{height:62vh;min-height:300px}
+    canvas{height:100%}
+    aside{border-left:none;border-top:1px solid #1c2330;padding:14px 14px 40px}
+    .row{grid-template-columns:1fr auto}
+    input[type=range]{height:34px}
+    button{padding:12px 14px;border-radius:12px}
+    header h1{font-size:18px}
+  }
 </style>
 </head>
 <body>
@@ -65,8 +95,7 @@
     <button id="randomize">Randomize</button>
     <button id="pause">Pause (Space)</button>
     <p style="color:var(--muted);font-size:12px;line-height:1.5;margin-top:8px">
-      • Click/drag to pull the flock. On touch devices, just drag your finger.<br>
-      • Try: increase <b>Separation</b> for tighter avoidance; increase <b>Alignment</b> to form streams.
+      • Drag to pull the flock (touch or mouse). Increase <b>Alignment</b> to form streams.
     </p>
   </aside>
 </div>
@@ -79,7 +108,6 @@
   addEventListener('resize',resize); resize();
 
   const rand=(a,b)=>a+Math.random()*(b-a), TAU=Math.PI*2;
-
   const $=id=>document.getElementById(id);
   const ui={
     count: $('count'), countVal:$('countVal'), countRO:$('countRO'),
@@ -113,7 +141,7 @@
     ui.cohVal.textContent=params.wCoh.toFixed(1);
   } sync();
 
-  // Boid model
+  // Boids
   let boids=[];
   function reset(){
     boids = Array.from({length:params.N},()=>({
@@ -152,7 +180,7 @@
   let paused=false; ui.pause.addEventListener('click',()=>{paused=!paused; ui.pause.textContent=paused?'Resume (Space)':'Pause (Space)';});
   addEventListener('keydown',e=>{ if(e.code==='Space'){ paused=!paused; ui.pause.textContent=paused?'Resume (Space)':'Pause (Space)'; } });
 
-  // Physics helpers
+  // Helpers
   function limit(vx,vy,max){
     const s = Math.hypot(vx,vy);
     if(s>max){ const k=max/s; return [vx*k, vy*k]; }
@@ -176,12 +204,9 @@
         const d2=dx*dx+dy*dy;
         if(d2<vR*vR){
           count++;
-          // alignment
-          ax+=o.vx; ay+=o.vy;
-          // cohesion
-          cx+=o.x; cy+=o.y;
-          // separation
-          if(d2<sR*sR){
+          ax+=o.vx; ay+=o.vy;      // alignment
+          cx+=o.x; cy+=o.y;        // cohesion
+          if(d2<sR*sR){            // separation
             const inv = 1/(Math.sqrt(d2)+0.0001);
             sx -= dx*inv; sy -= dy*inv;
           }
@@ -190,20 +215,13 @@
 
       let steerX=0, steerY=0;
       if(count>0){
-        // alignment
-        ax/=count; ay/=count; [ax,ay]=limit(ax,ay,params.maxSpeed);
-        ax -= b.vx; ay -= b.vy; [ax,ay]=limit(ax,ay,params.maxForce);
-        // cohesion
-        cx=(cx/count)-b.x; cy=(cy/count)-b.y; [cx,cy]=limit(cx,cy,params.maxSpeed);
-        cx -= b.vx; cy -= b.vy; [cx,cy]=limit(cx,cy,params.maxForce);
-        // separation
-        [sx,sy]=limit(sx,sy,params.maxSpeed); sx -= b.vx; sy -= b.vy; [sx,sy]=limit(sx,sy,params.maxForce);
-
+        ax/=count; ay/=count; [ax,ay]=limit(ax,ay,params.maxSpeed); ax-=b.vx; ay-=b.vy; [ax,ay]=limit(ax,ay,params.maxForce);
+        cx=(cx/count)-b.x; cy=(cy/count)-b.y; [cx,cy]=limit(cx,cy,params.maxSpeed); cx-=b.vx; cy-=b.vy; [cx,cy]=limit(cx,cy,params.maxForce);
+        [sx,sy]=limit(sx,sy,params.maxSpeed); sx-=b.vx; sy-=b.vy; [sx,sy]=limit(sx,sy,params.maxForce);
         steerX = params.wAli*ax + params.wCoh*cx + params.wSep*sx;
         steerY = params.wAli*ay + params.wCoh*cy + params.wSep*sy;
       }
 
-      // Mouse attractor
       if(params.mouse && mouse.down){
         let dx=mouse.x-b.x, dy=mouse.y-b.y;
         if(params.wrap){ if(dx>W/2)dx-=W; if(dx<-W/2)dx+=W; if(dy>H/2)dy-=H; if(dy<-H/2)dy+=H; }
@@ -227,7 +245,7 @@
   }
 
   function render(){
-    ctx.fillStyle='rgba(11,15,20,0.35)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='rgba(11,15,20,0.35)'; ctx.fillRect(0,0,cv.width,cv.height);
     ctx.strokeStyle='rgba(90,200,250,0.9)'; ctx.lineWidth=1.2;
     for(const b of boids){
       const a=Math.atan2(b.vy,b.vx);
