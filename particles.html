@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Particle Simulator</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#101722; --ink:#e6edf3; --muted:#9aa4b2; --accent:#5ac8fa; }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{display:grid;grid-template-columns:1fr 320px;grid-template-rows:auto 1fr;grid-template-areas:"h h" "c s";height:100%}
+  header{grid-area:h;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #1c2330;background:linear-gradient(180deg,#0f141d,#0c1118)}
+  header h1{margin:0;font-size:16px;letter-spacing:.3px}
+  header small{color:var(--muted)}
+  #stage{grid-area:c;position:relative}
+  canvas{display:block;width:100%;height:100%;background:radial-gradient(ellipse at center,#0b0f14 0%, #070b10 70%, #05080c 100%)}
+  aside{grid-area:s;background:var(--panel);border-left:1px solid #1c2330;padding:12px 12px 18px;overflow:auto}
+  h2{margin:8px 0 8px;font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:.2px}
+  .row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:6px 0}
+  input[type="range"]{width:100%;accent-color:var(--accent)}
+  input[type="checkbox"]{accent-color:var(--accent);transform:translateY(1px)}
+  button{background:#0f1522;color:var(--ink);border:1px solid #263247;padding:7px 10px;border-radius:8px;cursor:pointer;transition:.12s ease background,.12s ease transform}
+  button:hover{background:#141c2d} button:active{transform:translateY(1px)}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#0d1421;border:1px solid #1f2a3b;color:var(--muted);font-size:12px}
+  .help{color:var(--muted);font-size:12px;line-height:1.6}
+  a.back{color:#9aa4b2;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Particle Simulator <small>— tap/drag to attract</small></h1>
+    <div>
+      <span class="pill">Particles: <span id="countRO">200</span></span>
+      <span class="pill">FPS: <span id="fps">—</span></span>
+      <span style="margin-left:10px"><a class="back" href="index.html">⟵ Back</a></span>
+    </div>
+  </header>
+
+  <div id="stage"><canvas id="c"></canvas></div>
+
+  <aside>
+    <h2>System</h2>
+    <div class="row"><label>Particle count</label><span id="countVal">200</span></div>
+    <input id="count" type="range" min="20" max="800" value="200" step="10">
+    <div class="row"><label>Gravity</label><span id="gVal">60</span></div>
+    <input id="g" type="range" min="0" max="200" value="60" step="1">
+    <div class="row"><label>Drag</label><span id="dragVal">0.010</span></div>
+    <input id="drag" type="range" min="0" max="0.1" value="0.01" step="0.001">
+    <div class="row"><label>Time step</label><span id="dtVal">1.0</span></div>
+    <input id="dt" type="range" min="0.2" max="2.0" value="1.0" step="0.1">
+    <div class="row"><label>Softening</label><span id="softVal">8</span></div>
+    <input id="soft" type="range" min="0" max="30" value="8" step="1">
+    <div class="row"><label>Wrap at edges</label><span><input id="wrap" type="checkbox" checked></span></div>
+
+    <h2>Rendering</h2>
+    <div class="row"><label>Particle size</label><span id="sizeVal">2.5 px</span></div>
+    <input id="size" type="range" min="1" max="6" value="2.5" step="0.1">
+    <div class="row"><label>Trail fade</label><span id="trailVal">0.08</span></div>
+    <input id="trail" type="range" min="0" max="0.3" value="0.08" step="0.01">
+    <div class="row"><label>Link distance</label><span id="linkVal">80 px</span></div>
+    <input id="link" type="range" min="0" max="200" value="80" step="5">
+
+    <h2>Actions</h2>
+    <button id="reset">Reset</button>
+    <button id="pause">Pause (Space)</button>
+    <button id="galaxy">Galaxy</button>
+    <button id="repel">Repel Field</button>
+
+    <h2>Help</h2>
+    <div class="help">
+      • Tap/drag to attract particles (touch & mouse).<br>
+      • Space to pause/resume. R to reset.<br>
+      • “Galaxy” creates two counter-rotating swirls. “Repel Field” flips gravity sign.<br>
+      • Trails are drawn by fading the canvas each frame.
+    </div>
+  </aside>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const stage = document.getElementById('stage');
+
+  const $ = id => document.getElementById(id);
+  const ui = {
+    count: $('count'), countVal: $('countVal'), countRO: $('countRO'),
+    g: $('g'), gVal: $('gVal'),
+    drag: $('drag'), dragVal: $('dragVal'),
+    dt: $('dt'), dtVal: $('dtVal'),
+    soft: $('soft'), softVal: $('softVal'),
+    wrap: $('wrap'),
+    size: $('size'), sizeVal: $('sizeVal'),
+    trail: $('trail'), trailVal: $('trailVal'),
+    link: $('link'), linkVal: $('linkVal'),
+    reset: $('reset'), pause: $('pause'), galaxy: $('galaxy'), repel: $('repel'),
+    fps: $('fps')
+  };
+
+  let W=0, H=0, dpr=Math.min(2, window.devicePixelRatio||1);
+  function resize(){
+    W = stage.clientWidth; H = stage.clientHeight;
+    canvas.width = W*dpr; canvas.height = H*dpr;
+    canvas.style.width = W+'px'; canvas.style.height = H+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener('resize', resize); resize();
+
+  const rand = (a,b)=>a+Math.random()*(b-a); const TAU=Math.PI*2;
+  let params = {
+    N: parseInt(ui.count.value,10),
+    G: parseFloat(ui.g.value),
+    drag: parseFloat(ui.drag.value),
+    dt: parseFloat(ui.dt.value),
+    soft: parseFloat(ui.soft.value),
+    wrap: ui.wrap.checked,
+    size: parseFloat(ui.size.value),
+    trail: parseFloat(ui.trail.value),
+    link: parseFloat(ui.link.value),
+    repel:false
+  };
+  function sync(){
+    ui.countVal.textContent = params.N; ui.countRO.textContent=params.N;
+    ui.gVal.textContent = params.G.toFixed(0);
+    ui.dragVal.textContent = params.drag.toFixed(3);
+    ui.dtVal.textContent = params.dt.toFixed(1);
+    ui.softVal.textContent = params.soft.toFixed(0);
+    ui.sizeVal.textContent = params.size.toFixed(1)+' px';
+    ui.trailVal.textContent = params.trail.toFixed(2);
+    ui.linkVal.textContent = params.link.toFixed(0)+' px';
+  }
+  sync();
+
+  // Particles
+  let parts=[];
+  function reset(){
+    parts = Array.from({length: params.N}, ()=>({
+      x: rand(0,W), y: rand(0,H),
+      vx: rand(-30,30)/60, vy: rand(-30,30)/60,
+      m: rand(0.6,2.0)
+    }));
+  }
+  reset();
+
+  // Input: pointer + touch
+  const mouse = {x:0,y:0,down:false};
+  function setPointer(e){
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    mouse.x = t.clientX - rect.left; mouse.y = t.clientY - rect.top;
+  }
+  canvas.addEventListener('pointerdown', e=>{ mouse.down=true; setPointer(e); });
+  canvas.addEventListener('pointerup',   e=>{ mouse.down=false; setPointer(e); });
+  canvas.addEventListener('pointermove', setPointer);
+  canvas.addEventListener('touchstart', e=>{ mouse.down=true; setPointer(e); }, {passive:true});
+  canvas.addEventListener('touchend',   e=>{ mouse.down=false; }, {passive:true});
+  canvas.addEventListener('touchmove',  setPointer, {passive:true});
+
+  // UI bindings
+  ui.count.addEventListener('input', ()=>{ params.N=parseInt(ui.count.value,10); sync(); });
+  ui.count.addEventListener('change', ()=> reset());
+  ui.g.addEventListener('input', ()=>{ params.G=parseFloat(ui.g.value); sync(); });
+  ui.drag.addEventListener('input', ()=>{ params.drag=parseFloat(ui.drag.value); sync(); });
+  ui.dt.addEventListener('input', ()=>{ params.dt=parseFloat(ui.dt.value); sync(); });
+  ui.soft.addEventListener('input', ()=>{ params.soft=parseFloat(ui.soft.value); sync(); });
+  ui.wrap.addEventListener('change', ()=>{ params.wrap=ui.wrap.checked; });
+  ui.size.addEventListener('input', ()=>{ params.size=parseFloat(ui.size.value); sync(); });
+  ui.trail.addEventListener('input', ()=>{ params.trail=parseFloat(ui.trail.value); sync(); });
+  ui.link.addEventListener('input', ()=>{ params.link=parseFloat(ui.link.value); sync(); });
+  ui.reset.addEventListener('click', reset);
+  let paused=false;
+  ui.pause.addEventListener('click', ()=>{ paused=!paused; ui.pause.textContent=paused?'Resume (Space)':'Pause (Space)'; });
+  window.addEventListener('keydown', e=>{ if(e.code==='Space'){ paused=!paused; ui.pause.textContent=paused?'Resume (Space)':'Pause (Space)'; } if(e.key==='r'||e.key==='R'){ reset(); } });
+  ui.galaxy.addEventListener('click', ()=>{
+    const N=parts.length, cx1=W*0.45, cy1=H*0.5, cx2=W*0.55, cy2=H*0.5;
+    for(let i=0;i<N;i++){
+      const a = rand(0,TAU), r = rand(10, Math.min(W,H)*0.33), p=parts[i];
+      const cx = i%2?cx1:cx2, cy=i%2?cy1:cy2, dir=i%2?1:-1;
+      p.x = cx + Math.cos(a)*r; p.y = cy + Math.sin(a)*r;
+      const speed = Math.sqrt((params.G+1)/(r+40));
+      p.vx = -Math.sin(a)*speed*dir; p.vy = Math.cos(a)*speed*dir;
+      p.m = rand(0.8,2.5);
+    }
+  });
+  ui.repel.addEventListener('click', ()=> params.repel = !params.repel);
+
+  // Physics
+  function step(dt){
+    const soft2 = params.soft*params.soft;
+    const G = params.repel ? -params.G : params.G;
+
+    for(let i=0;i<parts.length;i++){
+      const a = parts[i];
+      for(let j=i+1;j<parts.length;j++){
+        const b = parts[j];
+        let dx=b.x-a.x, dy=b.y-a.y;
+        if(params.wrap){
+          if(dx>W/2) dx-=W; if(dx<-W/2) dx+=W;
+          if(dy>H/2) dy-=H; if(dy<-H/2) dy+=H;
+        }
+        const r2 = dx*dx+dy*dy+soft2;
+        const invR = 1/Math.sqrt(r2);
+        const invR3 = invR*invR*invR;
+        const F = G*a.m*b.m*invR3;
+        const fx = F*dx, fy = F*dy;
+        a.vx += fx/a.m*dt; a.vy += fy/a.m*dt;
+        b.vx -= fx/b.m*dt; b.vy -= fy/b.m*dt;
+      }
+
+      // Mouse/touch attractor
+      if(mouse.down){
+        let dx=mouse.x-a.x, dy=mouse.y-a.y;
+        if(params.wrap){
+          if(dx>W/2) dx-=W; if(dx<-W/2) dx+=W;
+          if(dy>H/2) dy-=H; if(dy<-H/2) dy+=H;
+        }
+        const r2 = dx*dx+dy*dy+soft2;
+        const invR = 1/Math.sqrt(r2); const invR3=invR*invR*invR;
+        const F = 200*a.m*invR3;
+        a.vx += F*dx*dt; a.vy += F*dy*dt;
+      }
+
+      // Drag + integrate
+      a.vx *= (1 - params.drag); a.vy *= (1 - params.drag);
+      a.x += a.vx*60*dt; a.y += a.vy*60*dt;
+
+      if(params.wrap){
+        if(a.x<0) a.x+=W; if(a.x>=W) a.x-=W;
+        if(a.y<0) a.y+=H; if(a.y>=H) a.y-=H;
+      }else{
+        if(a.x<0){a.x=0;a.vx=Math.abs(a.vx)} if(a.x>W){a.x=W;a.vx=-Math.abs(a.vx)}
+        if(a.y<0){a.y=0;a.vy=Math.abs(a.vy)} if(a.y>H){a.y=H;a.vy=-Math.abs(a.vy)}
+      }
+    }
+  }
+
+  // Render
+  function render(){
+    // Trail
+    const a = Math.max(0, Math.min(1, params.trail));
+    if(a>0){ ctx.fillStyle=`rgba(11,15,20,${a})`; ctx.fillRect(0,0,W,H); } else { ctx.clearRect(0,0,W,H); }
+
+    // Links
+    const L2 = params.link*params.link;
+    if(params.link>0){
+      ctx.lineWidth=1;
+      for(let i=0;i<parts.length;i++){
+        const p=parts[i];
+        for(let j=i+1;j<parts.length;j++){
+          const q=parts[j];
+          let dx=q.x-p.x, dy=q.y-p.y;
+          if(params.wrap){ if(dx>W/2)dx-=W; if(dx<-W/2)dx+=W; if(dy>H/2)dy-=H; if(dy<-H/2)dy+=H; }
+          const d2 = dx*dx+dy*dy;
+          if(d2<L2){
+            const alpha = 0.15*(1-d2/L2);
+            ctx.strokeStyle=`rgba(90,200,250,${alpha})`;
+            ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x+dx,p.y+dy); ctx.stroke();
+          }
+        }
+      }
+    }
+
+    // Particles
+    ctx.fillStyle='#c9e5ff';
+    const r=params.size;
+    for(const p of parts){ ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill(); }
+  }
+
+  // Main loop + FPS
+  let last=performance.now(), frames=0, acc=0, paused=false;
+  function tick(t){
+    const dt = Math.min(0.05,(t-last)/1000)*params.dt; last=t;
+    if(!paused){ step(dt); render(); }
+    frames++; acc+=dt;
+    if(acc>0.5){ ui.fps.textContent = Math.round(frames/acc); frames=0; acc=0; }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
