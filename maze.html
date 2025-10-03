@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Maze Forge — Generator + Solver</title>
+<style>
+  :root {
+    --bg:#0b0f14; --panel:#101722; --ink:#e6edf3; --muted:#9aa4b2; --accent:#5ac8fa; --ok:#30d158; --warn:#ffd60a;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{display:grid;grid-template-columns:1fr 320px;grid-template-rows:auto 1fr;grid-template-areas:"h h" "c s";height:100%}
+  header{grid-area:h;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #1c2330;background:linear-gradient(180deg,#0f141d,#0c1118)}
+  header h1{margin:0;font-size:16px;letter-spacing:.3px}
+  header small{color:var(--muted)}
+  #stage{grid-area:c;position:relative}
+  canvas{display:block;width:100%;height:100%;background:radial-gradient(ellipse at center,#0b0f14 0%,#070b10 70%,#05080c 100%)}
+  aside{grid-area:s;background:var(--panel);border-left:1px solid #1c2330;padding:12px 12px 18px;overflow:auto}
+  h2{margin:8px 0 8px;font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:.2px}
+  .row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:6px 0}
+  input[type="range"]{width:100%;accent-color:var(--accent)}
+  input[type="checkbox"]{accent-color:var(--accent");transform:translateY(1px)}
+  button{background:#0f1522;color:var(--ink);border:1px solid #263247;padding:7px 10px;border-radius:8px;cursor:pointer;transition:.12s ease background,.12s ease transform}
+  button:hover{background:#141c2d} button:active{transform:translateY(1px)}
+  button.primary{border-color:var(--accent)}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#0d1421;border:1px solid #1f2a3b;color:var(--muted);font-size:12px}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  .help{color:var(--muted);font-size:12px;line-height:1.6}
+  .kbd{font-family:ui-monospace,Menlo,Consolas,monospace;background:#0c121c;border:1px solid #1c2230;border-radius:6px;padding:0 6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Maze Forge <small>— generator + solver</small></h1>
+    <div>
+      <span class="pill">Cells: <span id="sizeReadout">31×21</span></span>
+      <span class="pill">Algorithm: <span id="algoReadout">DFS</span></span>
+      <span class="pill">FPS: <span id="fps">—</span></span>
+    </div>
+  </header>
+  <div id="stage"><canvas id="cv"></canvas></div>
+  <aside>
+    <h2>Grid</h2>
+    <div class="row">
+      <label>Cols × Rows</label>
+      <span><span id="colsVal">31</span> × <span id="rowsVal">21</span></span>
+    </div>
+    <input id="cols" type="range" min="9" max="101" step="2" value="31">
+    <input id="rows" type="range" min="9" max="101" step="2" value="21">
+    <div class="row">
+      <label>Cell size (px)</label>
+      <span><span id="cellVal">24</span></span>
+    </div>
+    <input id="cell" type="range" min="8" max="40" step="1" value="24">
+    <div class="row">
+      <label>Animate carve</label><span><input id="animate" type="checkbox" checked></span>
+    </div>
+
+    <h2>Generate</h2>
+    <div class="row">
+      <label>Algorithm</label>
+      <span>
+        <select id="algo">
+          <option>DFS</option>
+          <option>Wilson</option>
+          <option>Prim</option>
+        </select>
+      </span>
+    </div>
+    <div class="grid">
+      <button id="gen" class="primary">Generate</button>
+      <button id="clear">Clear</button>
+    </div>
+
+    <h2>Solve</h2>
+    <div class="row">
+      <label>Solver</label>
+      <span>
+        <select id="solver">
+          <option>A*</option>
+          <option>BFS</option>
+        </select>
+      </span>
+    </div>
+    <div class="grid">
+      <button id="solve">Solve</button>
+      <button id="step">Step</button>
+    </div>
+    <div class="row">
+      <label>Speed</label><span><span id="speedVal">1.00</span>x</span>
+    </div>
+    <input id="speed" type="range" min="0.2" max="3" step="0.1" value="1">
+
+    <h2>Interact</h2>
+    <div class="help">
+      • Click on a cell to toggle wall/space when paused.<br>
+      • Shift+Click sets <b>start</b>; Alt/Option+Click sets <b>goal</b>.<br>
+      • Press <span class="kbd">Space</span> to pause/resume animation.
+    </div>
+
+    <h2>Export</h2>
+    <div class="grid">
+      <button id="exportPNG">Save PNG</button>
+      <button id="exportSVG">Save SVG</button>
+    </div>
+  </aside>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const $ = id => document.getElementById(id);
+  const ui = {
+    cols:$('cols'), rows:$('rows'), cell:$('cell'),
+    colsVal:$('colsVal'), rowsVal:$('rowsVal'), cellVal:$('cellVal'),
+    sizeReadout:$('sizeReadout'),
+    animate:$('animate'),
+    algo:$('algo'), algoReadout:$('algoReadout'),
+    gen:$('gen'), clear:$('clear'),
+    solver:$('solver'), solve:$('solve'), step:$('step'),
+    speed:$('speed'), speedVal:$('speedVal'),
+    exportPNG:$('exportPNG'), exportSVG:$('exportSVG'),
+    fps:$('fps')
+  };
+
+  // State
+  let cols = parseInt(ui.cols.value,10);
+  let rows = parseInt(ui.rows.value,10);
+  let cell = parseInt(ui.cell.value,10);
+  let paused = false;
+  let speed = parseFloat(ui.speed.value);
+  let carvingAnim = ui.animate.checked;
+  let algo = ui.algo.value; // DFS, Wilson, Prim
+  let grid, start, goal;
+  let genIter = null, solveIter = null;
+  let W=0,H=0;
+
+  function resizeCanvas() {
+    W = cv.width = cols * cell + 2;
+    H = cv.height = rows * cell + 2;
+    draw();
+  }
+
+  function makeGrid(c, r) {
+    // 0 = wall, 1 = passage
+    const g = Array.from({length:r}, _ => Array(c).fill(0));
+    return g;
+  }
+
+  // Helpers
+  const inBounds = (x,y)=> x>=0 && x<cols && y>=0 && y<rows;
+  const nbrs4 = (x,y)=> [[x+1,y],[x-1,y],[x,y+1],[x,y-1]].filter(p=>inBounds(p[0],p[1]));
+  const rnd = n => Math.floor(Math.random()*n);
+
+  // Generation algorithms (yield-based for animation)
+  function* genDFS() {
+    grid = makeGrid(cols, rows);
+    // use "cells" spaced by 2 to maintain walls between
+    const sx = (Math.floor(Math.random()*Math.floor(cols/2))*2)+1;
+    const sy = (Math.floor(Math.random()*Math.floor(rows/2))*2)+1;
+    const stack = [[sx, sy]];
+    grid[sy][sx] = 1;
+    yield true;
+    while (stack.length) {
+      const [x,y] = stack[stack.length-1];
+      const dirs = [[2,0],[ -2,0], [0,2], [0,-2]].sort(()=>Math.random()-0.5);
+      let carved = false;
+      for (const [dx,dy] of dirs) {
+        const nx = x+dx, ny = y+dy;
+        if (inBounds(nx,ny) && grid[ny][nx]===0) {
+          grid[ny][nx]=1;
+          grid[y+dy/2][x+dx/2]=1;
+          stack.push([nx,ny]);
+          carved = true;
+          break;
+        }
+      }
+      if (!carved) stack.pop();
+      if (carvingAnim) yield true;
+    }
+    yield false;
+  }
+
+  function* genPrim() {
+    grid = makeGrid(cols, rows);
+    const frontier = [];
+    function addFrontier(x,y){
+      for(const [dx,dy] of [[2,0],[-2,0],[0,2],[0,-2]]){
+        const nx=x+dx, ny=y+dy;
+        if(inBounds(nx,ny) && grid[ny][nx]===0) frontier.push([nx,ny,x,y]);
+      }
+    }
+    const sx = (Math.floor(Math.random()*Math.floor(cols/2))*2)+1;
+    const sy = (Math.floor(Math.random()*Math.floor(rows/2))*2)+1;
+    grid[sy][sx]=1; addFrontier(sx,sy); yield true;
+    while(frontier.length){
+      const i = rnd(frontier.length);
+      const [x,y,px,py] = frontier.splice(i,1)[0];
+      if(grid[y][x]===1) continue;
+      if(grid[py][px]===1){
+        grid[y][x]=1;
+        grid[(y+py)>>1][(x+px)>>1]=1;
+        addFrontier(x,y);
+      }
+      if (carvingAnim) yield true;
+    }
+    yield false;
+  }
+
+  function* genWilson() {
+    // Loop-erased random walk on the odd-cell lattice
+    grid = makeGrid(cols, rows);
+    // track unvisited odd cells
+    const oddCells = [];
+    for (let y=1;y<rows;y+=2) for (let x=1;x<cols;x+=2) oddCells.push([x,y]);
+    function popRandom(arr){ return arr.splice(rnd(arr.length),1)[0]; }
+    // seed tree with one cell
+    const seed = popRandom(oddCells);
+    grid[seed[1]][seed[0]] = 1; yield true;
+
+    while (oddCells.length) {
+      let [sx, sy] = popRandom(oddCells);
+      let path = [[sx, sy]];
+      const visited = new Map(); visited.set(sx+','+sy,0);
+      while (true) {
+        const [x,y] = path[path.length-1];
+        const options = [[2,0],[-2,0],[0,2],[0,-2]].map(([dx,dy])=>[x+dx,y+dy,dx,dy]).filter(([nx,ny])=>inBounds(nx,ny));
+        const [nx,ny,dx,dy] = options[rnd(options.length)];
+        const key = nx+','+ny;
+        if (visited.has(key)) {
+          // erase loop
+          path = path.slice(0, visited.get(key)+1);
+        } else {
+          visited.set(key, path.length);
+          path.push([nx,ny]);
+        }
+        if (grid[ny][nx]===1) {
+          // carve along path
+          for (let i=0;i<path.length-1;i++) {
+            const [ax,ay] = path[i], [bx,by] = path[i+1];
+            grid[ay][ax]=1; grid[by][bx]=1;
+            grid[(ay+by)>>1][(ax+bx)>>1]=1;
+            if (carvingAnim) { yield true; }
+          }
+          break;
+        }
+      }
+      // remove any remaining odd cells that got added to tree
+      for (let i=oddCells.length-1;i>=0;i--) {
+        const [x,y] = oddCells[i];
+        if (grid[y][x]===1) oddCells.splice(i,1);
+      }
+    }
+    yield false;
+  }
+
+  // Solver (A* / BFS) as generators for step/animate
+  function* solveAStar() {
+    if (!start || !goal) return;
+    const [sx,sy] = start, [gx,gy] = goal;
+    const key = (x,y)=>x+","+y;
+    const open = new Map(); // key -> [x,y]
+    const gScore = new Map(); // key -> g
+    const fScore = new Map(); // key -> f
+    const came = new Map();
+    function h(x,y){ return Math.abs(x-gx)+Math.abs(y-gy); }
+    gScore.set(key(sx,sy),0);
+    fScore.set(key(sx,sy),h(sx,sy));
+    open.set(key(sx,sy),[sx,sy]);
+
+    while (open.size) {
+      // find min f
+      let bestK, best;
+      let bestF = Infinity;
+      for (const [k,[x,y]] of open) {
+        const f = fScore.get(k) ?? Infinity;
+        if (f < bestF) { bestF=f; bestK=k; best=[x,y]; }
+      }
+      const [x,y] = best;
+      open.delete(bestK);
+
+      if (x===gx && y===gy) return reconstruct(came, [x,y]);
+      for (const [nx,ny] of nbrs4(x,y)) {
+        if (grid[ny][nx]!==1) continue;
+        const k2 = key(nx,ny);
+        const tentative = (gScore.get(key(x,y)) ?? Infinity) + 1;
+        if (tentative < (gScore.get(k2) ?? Infinity)) {
+          came.set(k2,[x,y]);
+          gScore.set(k2,tentative);
+          fScore.set(k2, tentative + h(nx,ny));
+          if (!open.has(k2)) open.set(k2,[nx,ny]);
+        }
+      }
+      draw(open, came);
+      yield true;
+    }
+    return null;
+  }
+
+  function* solveBFS() {
+    if (!start || !goal) return;
+    const [sx,sy] = start, [gx,gy] = goal;
+    const key = (x,y)=>x+","+y;
+    const q = [[sx,sy]];
+    const came = new Map(); came.set(key(sx,sy), null);
+    while (q.length) {
+      const [x,y] = q.shift();
+      if (x===gx && y===gy) return reconstruct(came,[x,y]);
+      for (const [nx,ny] of nbrs4(x,y)) {
+        if (grid[ny][nx]!==1) continue;
+        const k=key(nx,ny);
+        if (!came.has(k)) {
+          came.set(k,[x,y]);
+          q.push([nx,ny]);
+        }
+      }
+      draw(new Map(), came);
+      yield true;
+    }
+    return null;
+  }
+
+  function reconstruct(came, node) {
+    const key = (x,y)=>x+","+y;
+    const path = [node];
+    let cur = node;
+    while (came.get(key(cur[0],cur[1]))!==null) {
+      cur = came.get(key(cur[0],cur[1]));
+      path.push(cur);
+    }
+    path.reverse();
+    solvedPath = path;
+    draw();
+    return path;
+  }
+
+  // Drawing
+  let solvedPath = null;
+  function draw(frontier=new Map(), came=new Map()) {
+    // Background
+    ctx.fillStyle = '#0b0f14';
+    ctx.fillRect(0,0,cv.width,cv.height);
+    // Grid
+    for (let y=0;y<rows;y++) {
+      for (let x=0;x<cols;x++) {
+        const v = grid?.[y]?.[x] || 0;
+        const px = 1 + x*cell, py = 1 + y*cell;
+        if (v===1) {
+          ctx.fillStyle = '#0f1621';
+        } else {
+          ctx.fillStyle = '#060a10';
+        }
+        ctx.fillRect(px,py,cell-1,cell-1);
+      }
+    }
+    // Frontier/came visualization
+    ctx.fillStyle = 'rgba(90,200,250,0.3)';
+    for (const [, [x,y]] of frontier) {
+      ctx.fillRect(1+x*cell,1+y*cell,cell-1,cell-1);
+    }
+    ctx.fillStyle = 'rgba(48,209,88,0.25)';
+    for (const [k,v] of came) {
+      if (!v) continue;
+      const [x,y] = k.split(',').map(Number);
+      ctx.fillRect(1+x*cell,1+y*cell,cell-1,cell-1);
+    }
+    // Start/goal
+    if (start) {
+      ctx.fillStyle = '#ffd60a';
+      ctx.fillRect(1+start[0]*cell,1+start[1]*cell,cell-1,cell-1);
+    }
+    if (goal) {
+      ctx.fillStyle = '#30d158';
+      ctx.fillRect(1+goal[0]*cell,1+goal[1]*cell,cell-1,cell-1);
+    }
+    // Path
+    if (solvedPath) {
+      ctx.strokeStyle = '#5ac8fa';
+      ctx.lineWidth = Math.max(2, Math.floor(cell/4));
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      for (let i=0;i<solvedPath.length;i++) {
+        const [x,y] = solvedPath[i];
+        const cx = 1 + x*cell + (cell-1)/2;
+        const cy = 1 + y*cell + (cell-1)/2;
+        if (i===0) ctx.moveTo(cx,cy);
+        else ctx.lineTo(cx,cy);
+      }
+      ctx.stroke();
+    }
+  }
+
+  // Export
+  function savePNG() {
+    const link = document.createElement('a');
+    link.download = 'maze.png';
+    link.href = cv.toDataURL('image/png');
+    link.click();
+  }
+  function saveSVG() {
+    // Simple SVG export: cells as rects
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${cv.width}" height="${cv.height}" viewBox="0 0 ${cv.width} ${cv.height}">`;
+    svg += `<rect width="100%" height="100%" fill="#0b0f14"/>`;
+    for (let y=0;y<rows;y++) for (let x=0;x<cols;x++) {
+      const v = grid?.[y]?.[x] || 0;
+      const px = 1 + x*cell, py = 1 + y*cell;
+      const col = (v===1) ? '#0f1621' : '#060a10';
+      svg += `<rect x="${px}" y="${py}" width="${cell-1}" height="${cell-1}" fill="${col}"/>`;
+    }
+    if (start) svg += `<rect x="${1+start[0]*cell}" y="${1+start[1]*cell}" width="${cell-1}" height="${cell-1}" fill="#ffd60a"/>`;
+    if (goal) svg += `<rect x="${1+goal[0]*cell}" y="${1+goal[1]*cell}" width="${cell-1}" height="${cell-1}" fill="#30d158"/>`;
+    if (solvedPath) {
+      const pts = solvedPath.map(([x,y]) => (1 + x*cell + (cell-1)/2)+','+(1 + y*cell + (cell-1)/2)).join(' ');
+      svg += `<polyline fill="none" stroke="#5ac8fa" stroke-width="${Math.max(2, Math.floor(cell/4))}" points="${pts}"/>`;
+    }
+    svg += `</svg>`;
+    const blob = new Blob([svg], {type:'image/svg+xml'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'maze.svg'; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+  }
+
+  // Mouse interactions
+  cv.addEventListener('click', e => {
+    const rect = cv.getBoundingClientRect();
+    const x = Math.floor((e.clientX - rect.left - 1)/cell);
+    const y = Math.floor((e.clientY - rect.top - 1)/cell);
+    if (!inBounds(x,y)) return;
+    if (e.shiftKey) start = [x,y];
+    else if (e.altKey) goal = [x,y];
+    else {
+      // toggle wall/pass
+      grid[y][x] = grid[y][x] ? 0 : 1;
+    }
+    solvedPath = null;
+    draw();
+  });
+
+  // UI bindings
+  function syncReadouts() {
+    ui.colsVal.textContent = cols; ui.rowsVal.textContent = rows; ui.cellVal.textContent = cell;
+    ui.sizeReadout.textContent = cols + '×' + rows;
+    ui.algoReadout.textContent = algo;
+    ui.speedVal.textContent = speed.toFixed(2);
+  }
+  ui.cols.addEventListener('input', ()=>{cols=parseInt(ui.cols.value,10); syncReadouts(); resizeCanvas();});
+  ui.rows.addEventListener('input', ()=>{rows=parseInt(ui.rows.value,10); syncReadouts(); resizeCanvas();});
+  ui.cell.addEventListener('input', ()=>{cell=parseInt(ui.cell.value,10); syncReadouts(); resizeCanvas();});
+  ui.animate.addEventListener('change', ()=>{carvingAnim = ui.animate.checked;});
+  ui.algo.addEventListener('change', ()=>{algo = ui.algo.value; syncReadouts();});
+  ui.speed.addEventListener('input', ()=>{speed=parseFloat(ui.speed.value); syncReadouts();});
+  ui.clear.addEventListener('click', ()=>{grid = makeGrid(cols, rows); start=null; goal=null; solvedPath=null; draw();});
+  ui.gen.addEventListener('click', ()=>{ start = [1,1]; goal=[cols-2,rows-2]; solvedPath=null; startGen();});
+  ui.solve.addEventListener('click', ()=>{ startSolve(); });
+  ui.step.addEventListener('click', ()=>{ stepSolveOnce(); });
+  ui.exportPNG.addEventListener('click', savePNG);
+  ui.exportSVG.addEventListener('click', saveSVG);
+  window.addEventListener('keydown', e=>{ if(e.code==='Space'){ paused=!paused; } });
+
+  function startGen() {
+    if (algo==='DFS') genIter = genDFS();
+    else if (algo==='Wilson') genIter = genWilson();
+    else genIter = genPrim();
+  }
+  function startSolve() {
+    if (!grid) return;
+    if (!start) start=[1,1];
+    if (!goal) goal=[cols-2,rows-2];
+    solveIter = (ui.solver.value==='A*') ? solveAStar() : solveBFS();
+  }
+  function stepSolveOnce() {
+    if (!solveIter) startSolve();
+    const n = solveIter.next();
+    if (n.value && n.value.length) { solvedPath = n.value; draw(); solveIter = null; }
+  }
+
+  // Main loop
+  let last = performance.now(), fpsAcc=0, frames=0;
+  function loop(t) {
+    const dt = (t-last)/1000; last = t;
+    if (genIter && !paused) {
+      let k = 0;
+      while (k++ < 300*speed) {
+        const n = genIter.next();
+        if (n.done) { genIter=null; break; }
+        if (!carvingAnim) continue;
+        draw();
+        break;
+      }
+    } else if (solveIter && !paused) {
+      let k = 0;
+      while (k++ < 400*speed) {
+        const n = solveIter.next();
+        if (n && n.value && n.value.length) { solvedPath = n.value; draw(); solveIter=null; break; }
+        if (n.done) { solveIter=null; break; }
+        draw();
+        break;
+      }
+    }
+    if (!genIter && !solveIter) { /* idle */ }
+    // FPS
+    fpsAcc += dt; frames++;
+    if (fpsAcc>0.5) { ui.fps.textContent = Math.round(frames/fpsAcc*1); fpsAcc=0; frames=0; }
+    requestAnimationFrame(loop);
+  }
+
+  // Init
+  syncReadouts();
+  grid = makeGrid(cols, rows);
+  resizeCanvas();
+  draw();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
