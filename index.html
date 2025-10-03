@@ -1,16 +1,51 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <title>The Playground</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body{margin:0;background:#0b0f14;color:#e6edf3;font-family:system-ui,Segoe UI,Arial;text-align:center;padding:60px 14px}
-    a{color:#5ac8fa;text-decoration:none}
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #0b0f14;
+      color: #e6edf3;
+      text-align: center;
+      padding: 60px 20px;
+    }
+    h1 { margin-bottom: 10px; }
+    p { color: #9aa4b2; margin-bottom: 40px; }
+    .projects {
+      display: grid;
+      gap: 20px;
+      max-width: 600px;
+      margin: auto;
+    }
+    a {
+      display: block;
+      padding: 20px;
+      background: #101722;
+      border: 1px solid #263247;
+      border-radius: 12px;
+      text-decoration: none;
+      color: #e6edf3;
+      font-size: 18px;
+      transition: background 0.2s, transform 0.1s;
+    }
+    a:hover {
+      background: #141c2d;
+      transform: translateY(-2px);
+    }
   </style>
 </head>
 <body>
-  <h1>Welcome to The Playground 🎮</h1>
-  <p>If you can see this, GitHub Pages is working.</p>
+  <h1>🎮 The Playground</h1>
+  <p>Welcome! Choose a project to explore:</p>
+
+  <div class="projects">
+    <a href="maze.html">🌀 Maze Forge</a>
+    <a href="particles.html">✨ Particle Simulator</a>
+    <!-- we’ll add more as we go -->
+  </div>
 </body>
 </html>
