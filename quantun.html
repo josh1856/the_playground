@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>Quantum Lottery Picker — Powerball & Mega Millions</title>
+<style>
+  :root{
+    --bg:#0b0f14;--panel:#101722;--ink:#e6edf3;--muted:#9aa4b2;--acc:#5ac8fa;--ok:#30d158;--warn:#ffd60a;--bad:#ff6b6b
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{max-width:860px;margin:0 auto;padding:16px}
+  h1{margin:4px 0 8px}
+  .sub{color:var(--muted)}
+  .card{background:var(--panel);border:1px solid #263247;border-radius:14px;padding:14px;margin:12px 0}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  label{display:flex;gap:10px;align-items:center;color:#c7d2de}
+  input[type=range]{width:220px}
+  select,button,input[type=text]{background:#0f1522;border:1px solid #263247;color:var(--ink);padding:10px 12px;border-radius:12px}
+  button{cursor:pointer}
+  button.primary{border-color:var(--acc)}
+  .pill{display:inline-flex;gap:6px;align-items:center;padding:6px 10px;border-radius:999px;background:#0d1421;border:1px solid #1f2a3b;color:#c7d2de;font-weight:600}
+  .numbers{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px}
+  .ball{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;font-weight:700;background:#0f1522;border:1px solid #263247}
+  .pb{background:#2a0f13;border-color:#6b1d27}
+  .mm{background:#1b1a07;border-color:#6b631d}
+  .line{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between}
+  .small{font-size:13px;color:#9aa4b2}
+  a{color:#9aa4b2;text-decoration:none}
+  #viz{height:260px;position:relative;overflow:hidden;border-radius:12px;background:radial-gradient(75% 60% at 50% 42%,#0d141e,#09111a 65%,#060b12)}
+  canvas{position:absolute;inset:0;width:100%;height:100%}
+  .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:8px}
+  .chip{padding:8px;border-radius:10px;border:1px solid #263247;background:#0f1522;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🫰 Quantum Lottery Picker</h1>
+  <p class="sub">Powerball & Mega Millions — <b>Pure Odds</b> (uniform) or <b>EV-Optimized</b> (avoids popular human picks to reduce jackpot splits). RNG uses <code>crypto.getRandomValues</code>.</p>
+
+  <div class="card">
+    <div class="row">
+      <label>Game
+        <select id="game">
+          <option value="pb">Powerball (5 × 1–69 + PB 1–26)</option>
+          <option value="mm">Mega Millions (5 × 1–70 + MB 1–25)</option>
+        </select>
+      </label>
+      <label>Preparedness <input id="prep" type="range" min="0" max="100" value="60"></label>
+      <label>Exposure <input id="expo" type="range" min="0" max="100" value="55"></label>
+      <span class="pill" id="entropy">Entropy: crypto</span>
+      <a class="small" href="index.html" style="margin-left:auto">⟵ Home</a>
+    </div>
+    <div style="margin-top:6px" class="small">Preparedness: better selection/convert from candidates • Exposure: more candidates per pick • These don’t change draw physics, they bias <i>your</i> choices.</div>
+  </div>
+
+  <div class="card" id="viz"><canvas id="cv"></canvas></div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <button id="pure" class="primary">🎲 Generate — Pure Odds</button>
+      <button id="ev">🤝 Generate — EV-Optimized</button>
+      <button id="again">↺ Again</button>
+      <button id="copy">📋 Copy</button>
+    </div>
+    <div id="out" class="numbers"></div>
+  </div>
+
+  <div class="card">
+    <div class="line">
+      <strong>Optional: paste recent winning lines (to avoid copying them)</strong>
+      <span class="small">Format: comma or space separated. Example: <code>8 17 22 28 55 | 14</code></span>
+    </div>
+    <div class="row">
+      <input id="recent1" type="text" placeholder="Most recent draw"/>
+      <input id="recent2" type="text" placeholder="2nd most recent"/>
+      <input id="recent3" type="text" placeholder="3rd most recent"/>
+      <button id="clearRecent">Clear</button>
+    </div>
+    <div class="small">If left blank, the generator just avoids birthdays/sequences (still EV-optimized).</div>
+  </div>
+
+  <div class="card small">
+    <b>How this helps (honest version):</b>
+    <ul>
+      <li><b>Pure Odds</b> gives each combination exactly the same chance as any other (true for both games).</li>
+      <li><b>EV-Optimized</b> tries to avoid numbers lots of people choose (1–31 birthdays, straight sequences like 1-2-3-4-5, and your pasted recent draws). That <i>doesn’t</i> increase the chance of winning — it reduces the chance of <u>splitting</u> a jackpot if you win.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  /* ---------- WebCrypto RNG ---------- */
+  function r01(){ const u=new Uint32Array(1); crypto.getRandomValues(u); return u[0]/4294967296; }
+  function randint(min,max){ return min + Math.floor(r01()*(max-min+1)); }
+
+  /* ---------- Canvas Viz ---------- */
+  const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+  let W=0,H=0,dpr=Math.min(2,window.devicePixelRatio||1);
+  function resize(){ const r=cv.getBoundingClientRect(); W=r.width; H=r.height; cv.width=W*dpr; cv.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); }
+  addEventListener('resize', resize, {passive:true}); resize();
+
+  // wave particles
+  const waves=[];
+  function spawnWave(text, color){
+    const cx=W/2, cy=H/2, n=26;
+    for(let i=0;i<n;i++){
+      const a=(i/n)*Math.PI*2, rad=18+r01()*6;
+      waves.push({x:cx,y:cy, vx:Math.cos(a)*rad, vy:Math.sin(a)*rad, t:0, life:1.0, color});
+    }
+    // center label
+    label=text;
+  }
+  let label='';
+  function drawViz(){
+    ctx.clearRect(0,0,W,H);
+    // rings
+    ctx.save();
+    const cx=W/2, cy=H/2;
+    for(let i=0;i<6;i++){
+      ctx.beginPath(); ctx.arc(cx,cy,40+i*24,0,Math.PI*2);
+      ctx.strokeStyle='rgba(120,160,210,'+(0.12-i*0.015)+')'; ctx.lineWidth=2; ctx.stroke();
+    }
+    ctx.restore();
+    // particles
+    for(let i=waves.length-1;i>=0;i--){
+      const p=waves[i]; p.t+=1/60; p.life-=1/80; p.x+=p.vx*(1/60); p.y+=p.vy*(1/60);
+      p.vx*=0.985; p.vy*=0.985;
+      if(p.life<=0){ waves.splice(i,1); continue; }
+      ctx.fillStyle=p.color; ctx.globalAlpha=p.life; ctx.fillRect(p.x,p.y,2,2); ctx.globalAlpha=1;
+    }
+    // label
+    if(label){
+      ctx.fillStyle='#c7d2de'; ctx.font='15px system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial';
+      ctx.textAlign='center'; ctx.fillText(label, cx, cy+H*0.32);
+    }
+    requestAnimationFrame(drawViz);
+  }
+  requestAnimationFrame(drawViz);
+
+  /* ---------- DOM ---------- */
+  const els={
+    game:document.getElementById('game'),
+    prep:document.getElementById('prep'),
+    expo:document.getElementById('expo'),
+    out: document.getElementById('out'),
+    pure:document.getElementById('pure'),
+    ev:  document.getElementById('ev'),
+    again:document.getElementById('again'),
+    copy:document.getElementById('copy'),
+    r1:document.getElementById('recent1'),
+    r2:document.getElementById('recent2'),
+    r3:document.getElementById('recent3'),
+    clearRecent:document.getElementById('clearRecent')
+  };
+
+  /* ---------- parsing helpers ---------- */
+  function parseLine(s){
+    if(!s) return null;
+    // accepts: "1 2 3 4 5 | 6" or "1,2,3,4,5,6"
+    s=s.replace(/[\,\|]/g,' ').trim().split(/\s+/).map(x=>parseInt(x,10)).filter(Boolean);
+    if(s.length<6) return null;
+    return {nums:s.slice(0,5).sort((a,b)=>a-b), bonus:s[5]};
+  }
+  function getRecentSet(){
+    const a=[parseLine(els.r1.value), parseLine(els.r2.value), parseLine(els.r3.value)].filter(Boolean);
+    const set=new Set();
+    a.forEach(r => r.nums.forEach(n=>set.add(n)));
+    return set;
+  }
+
+  /* ---------- pickers ---------- */
+  function pickUnique(n,min,max,weightFn){
+    const set=new Set(); let guard=0, limit=(max-min+1)*6;
+    while(set.size<n && guard<limit){
+      let x=randint(min,max);
+      const w=Math.max(0.0001, weightFn?weightFn(x):1);
+      if(r01()<w) set.add(x);
+      guard++;
+    }
+    while(set.size<n) set.add(randint(min,max));
+    return Array.from(set).sort((a,b)=>a-b);
+  }
+
+  function render(game, nums, bonus){
+    els.out.innerHTML='';
+    const wrap=document.createElement('div'); wrap.className='numbers';
+    nums.forEach(n=>{const d=document.createElement('div'); d.className='ball'; d.textContent=n; wrap.appendChild(d);});
+    const b=document.createElement('div'); b.className='ball '+(game==='pb'?'pb':'mm'); b.textContent=bonus; wrap.appendChild(b);
+    els.out.appendChild(wrap);
+    const tag= game==='pb' ? 'Powerball' : 'Mega Millions';
+    spawnWave(tag+': '+nums.join(' ')+' | '+bonus, game==='pb'?'#ff6b6b':'#ffd60a');
+  }
+
+  function purePick(){
+    const g=els.game.value;
+    const cfg = g==='pb' ? {min:1,max:69,bmin:1,bmax:26} : {min:1,max:70,bmin:1,bmax:25};
+    const nums = pickUnique(5,cfg.min,cfg.max);
+    const bonus = randint(cfg.bmin,cfg.bmax);
+    render(g, nums, bonus);
+    lastMode='pure';
+  }
+
+  function evPick(){
+    const g=els.game.value;
+    const cfg = g==='pb' ? {min:1,max:69,bmin:1,bmax:26} : {min:1,max:70,bmin:1,bmax:25};
+    const prep = +els.prep.value/100, expo=+els.expo.value/100;
+    const recentSet=getRecentSet();
+
+    // weight function to avoid popular human picks + recent repeats + long low sequences
+    const w=function(x){
+      let w=1;
+      if(x<=31) w*=0.55;          // birthdays
+      if(recentSet.has(x)) w*=0.5;// very recent
+      if(x<=10) w*=0.85;          // very low range crowding
+      if(x>=Math.floor((cfg.max+cfg.min)/2)) w*=1.12; // gentle nudge to higher half
+      // preparedness/exposure nudges overall selection greediness later; here we just shape the pool
+      return Math.max(0.15, Math.min(1.0, w));
+    };
+
+    // exposure -> more candidate sets; preparedness -> lower softmax temperature
+    const N = Math.max(1, Math.round(1 + expo*9)); // 1..10 candidate sets
+    const candidates=[];
+    for(let i=0;i<N;i++){
+      candidates.push(pickUnique(5,cfg.min,cfg.max,w));
+    }
+    // temperature in [0.15..1.5]
+    const tau = 1.5 - prep*1.35;
+    const scores = candidates.map(cs=>{
+      // score higher if numbers are spread out and higher on average
+      let spread=0; for(let i=1;i<cs.length;i++) spread += cs[i]-cs[i-1];
+      const avg = cs.reduce((a,b)=>a+b,0)/cs.length;
+      return spread*0.6 + avg*0.4;
+    });
+    const exps = scores.map(s=>Math.exp(s/tau));
+    const Z = exps.reduce((a,b)=>a+b,0);
+    let pick = r01()*Z, idx=0; for(let i=0;i<exps.length;i++){ pick-=exps[i]; if(pick<=0){ idx=i; break; } }
+    let nums = candidates[idx].slice().sort((a,b)=>a-b);
+
+    // anti-sequence pass (avoid 3+ in a row)
+    for(let i=0;i<nums.length-2;i++){
+      if(nums[i]+1===nums[i+1] && nums[i+1]+1===nums[i+2]){
+        let x = Math.max(32, Math.floor((cfg.max+cfg.min)/2)) + randint(0, cfg.max - Math.max(32, Math.floor((cfg.max+cfg.min)/2)));
+        while(nums.includes(x)) x = randint(cfg.min,cfg.max);
+        nums[i+1]=x; nums.sort((a,b)=>a-b);
+      }
+    }
+    const bonus = randint(cfg.bmin,cfg.bmax); // bonus uniform; crowding is weaker here
+    render(g, nums, bonus);
+    lastMode='ev';
+  }
+
+  let lastMode='pure';
+  document.getElementById('pure').onclick=purePick;
+  document.getElementById('ev').onclick=evPick;
+  document.getElementById('again').onclick=function(){ (lastMode==='ev'?evPick:purePick)(); };
+  document.getElementById('copy').onclick=function(){
+    const text = (els.out.textContent||'').trim();
+    if(!text) return;
+    navigator.clipboard?.writeText(text);
+  };
+  document.getElementById('clearRecent').onclick=function(){
+    els.r1.value=''; els.r2.value=''; els.r3.value='';
+  };
+
+  // first draw so the page isn’t blank
+  purePick();
+})();
+</script>
+</body>
+</html>
