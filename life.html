@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Life Sim — tiny creatures with needs</title>
+<style>
+  :root{--bg:#0b0f14;--panel:#101722;--ink:#e6edf3;--muted:#9aa4b2;--accent:#5ac8fa;--ok:#30d158;--warn:#ffd60a}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+    -webkit-text-size-adjust:100%}
+  /* Desktop layout */
+  .wrap{display:grid;grid-template-columns:1fr 320px;grid-template-rows:auto 1fr;
+        grid-template-areas:"h h" "c s";height:100%}
+  header{grid-area:h;display:flex;justify-content:space-between;align-items:center;
+    padding:10px 14px;border-bottom:1px solid #1c2330;
+    background:linear-gradient(180deg,#0f141d,#0c1118); position:sticky; top:0; z-index:5}
+  header h1{margin:0;font-size:16px;letter-spacing:.3px}
+  header small{color:var(--muted)}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#0d1421;border:1px solid #1f2a3b;color:var(--muted);font-size:12px}
+  #stage{grid-area:c;position:relative}
+  canvas{display:block;width:100%;height:100%;
+    background:radial-gradient(ellipse at center,#0b0f14 0%,#070b10 70%,#05080c 100%)}
+  aside{grid-area:s;background:var(--panel);border-left:1px solid #1c2330;padding:12px 12px 18px;overflow:auto}
+  h2{margin:8px 0;font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:.2px}
+  .row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:6px 0}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  input[type=checkbox]{accent-color:var(--accent);transform:translateY(1px)}
+  button{background:#0f1522;color:var(--ink);border:1px solid #263247;padding:9px 12px;border-radius:10px;cursor:pointer;transition:.12s ease background,.12s ease transform}
+  button:hover{background:#141c2d} button:active{transform:translateY(1px)}
+  a.back{color:#9aa4b2;text-decoration:none}
+  .help{color:var(--muted);font-size:12px;line-height:1.5}
+  /* Mobile */
+  @media (max-width:760px){
+    .wrap{grid-template-columns:1fr;grid-template-rows:auto auto auto;
+          grid-template-areas:"h" "c" "s";height:auto}
+    #stage{height:62vh;min-height:300px}
+    canvas{height:100%}
+    aside{border-left:none;border-top:1px solid #1c2330;padding:14px 14px 40px}
+    .row{grid-template-columns:1fr auto}
+    input[type=range]{height:34px}
+    button{padding:12px 14px;border-radius:12px}
+    header h1{font-size:18px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Life Sim <small>— eat • rest • wander</small></h1>
+    <div>
+      <span class="pill">Creatures: <span id="popRO">0</span></span>
+      <span class="pill">Food: <span id="foodRO">0</span></span>
+      <span class="pill">FPS: <span id="fps">—</span></span>
+      <span style="margin-left:10px"><a class="back" href="index.html">⟵ Back</a></span>
+    </div>
+  </header>
+
+  <div id="stage"><canvas id="cv"></canvas></div>
+
+  <aside>
+    <h2>World</h2>
+    <div class="row"><label>Population</label><span id="popVal">25</span></div>
+    <input id="pop" type="range" min="5" max="200" value="25" step="1">
+    <div class="row"><label>Food spawn / sec</label><span id="foodRateVal">2.0</span></div>
+    <input id="foodRate" type="range" min="0" max="10" value="2" step="0.1">
+    <div class="row"><label>Vision (px)</label><span id="visionVal">80</span></div>
+    <input id="vision" type="range" min="30" max="160" value="80" step="1">
+    <div class="row"><label>Max speed</label><span id="speedVal">2.0</span></div>
+    <input id="speed" type="range" min="0.6" max="4" value="2" step="0.1">
+    <div class="row"><label>Metabolism</label><span id="metaVal">1.00</span></div>
+    <input id="meta" type="range" min="0.5" max="2" value="1" step="0.01">
+    <div class="row"><label>Wrap at edges</label><span><input id="wrap" type="checkbox" checked></span></div>
+    <div class="row"><label>Allow reproduction</label><span><input id="repro" type="checkbox" checked></span></div>
+
+    <h2>Actions</h2>
+    <button id="addFood">+ Add 50 food</button>
+    <button id="reset">Reset</button>
+    <button id="pause">Pause (Space)</button>
+
+    <h2>Tips</h2>
+    <div class="help">
+      • Tap/drag in the world to **drop food**.<br>
+      • Creatures <em>seek food</em> when hungry, else they <em>wander</em> or <em>rest</em> if fatigued.<br>
+      • They die if starvation hits 100 or of old age. If reproduction is on, healthy adults may spawn a child.
+    </div>
+  </aside>
+</div>
+
+<script>
+(() => {
+  // ====== Canvas & sizing ======
+  const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  const stage = document.getElementById('stage');
+  let W=0,H=0,dpr=Math.min(2,window.devicePixelRatio||1);
+  function resize(){
+    W=stage.clientWidth; H=stage.clientHeight;
+    cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+'px'; cv.style.height=H+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  } addEventListener('resize', resize); resize();
+
+  // ====== UI ======
+  const $=id=>document.getElementById(id);
+  const ui={
+    pop:$('pop'), popVal:$('popVal'), popRO:$('popRO'),
+    foodRate:$('foodRate'), foodRateVal:$('foodRateVal'), foodRO:$('foodRO'),
+    vision:$('vision'), visionVal:$('visionVal'),
+    speed:$('speed'), speedVal:$('speedVal'),
+    meta:$('meta'), metaVal:$('metaVal'),
+    wrap:$('wrap'), repro:$('repro'),
+    addFood:$('addFood'), reset:$('reset'), pause:$('pause'),
+    fps:$('fps')
+  };
+  const params={
+    N:parseInt(ui.pop.value,10),
+    foodRate:parseFloat(ui.foodRate.value),
+    vision:parseFloat(ui.vision.value),
+    maxSpeed:parseFloat(ui.speed.value),
+    metabolism:parseFloat(ui.meta.value),
+    wrap:ui.wrap.checked, repro:ui.repro.checked
+  };
+  function sync(){
+    ui.popVal.textContent=params.N; ui.popRO.textContent=creatures.length;
+    ui.foodRateVal.textContent=params.foodRate.toFixed(1);
+    ui.visionVal.textContent=params.vision.toFixed(0);
+    ui.speedVal.textContent=params.maxSpeed.toFixed(1);
+    ui.metaVal.textContent=params.metabolism.toFixed(2);
+    ui.foodRO.textContent=food.length;
+  }
+
+  // ====== World state ======
+  const rand=(a,b)=>a+Math.random()*(b-a), TAU=Math.PI*2;
+  let creatures=[], food=[], paused=false;
+
+  function spawnFood(n=50){
+    for(let i=0;i<n;i++){
+      food.push({x:rand(0,W),y:rand(0,H),v:1}); // v = nutrition value
+    }
+  }
+  function makeCreature(x=rand(0,W),y=rand(0,H)){
+    return {
+      x,y, vx:rand(-1,1), vy:rand(-1,1),
+      hunger:rand(10,40), fatigue:rand(10,40), age:0, alive:true,
+      color:`hsl(${Math.floor(rand(180,220))},80%,70%)`
+    };
+  }
+  function reset(){
+    creatures = Array.from({length:params.N}, ()=>makeCreature());
+    food = []; spawnFood(120);
+    sync();
+  }
+  reset();
+
+  // ====== Input: tap to drop food ======
+  function dropFoodAt(e){
+    const r=cv.getBoundingClientRect();
+    const t=e.touches?e.touches[0]:e;
+    const x=t.clientX-r.left, y=t.clientY-r.top;
+    // cluster drop
+    for(let i=0;i<14;i++){
+      const a=rand(0,TAU), r2=rand(0,18);
+      food.push({x:x+Math.cos(a)*r2, y:y+Math.sin(a)*r2, v:1});
+    }
+    sync();
+  }
+  cv.addEventListener('pointerdown', dropFoodAt);
+  cv.addEventListener('touchstart', dropFoodAt, {passive:true});
+  cv.addEventListener('touchmove', dropFoodAt, {passive:true});
+
+  // ====== UI events ======
+  ui.pop.addEventListener('input',()=>{params.N=parseInt(ui.pop.value,10); ui.popVal.textContent=params.N;});
+  ui.pop.addEventListener('change',()=>reset());
+  ui.foodRate.addEventListener('input',()=>{params.foodRate=parseFloat(ui.foodRate.value); sync();});
+  ui.vision.addEventListener('input',()=>{params.vision=parseFloat(ui.vision.value); sync();});
+  ui.speed.addEventListener('input',()=>{params.maxSpeed=parseFloat(ui.speed.value); sync();});
+  ui.meta.addEventListener('input',()=>{params.metabolism=parseFloat(ui.meta.value); sync();});
+  ui.wrap.addEventListener('change',()=>{params.wrap=ui.wrap.checked;});
+  ui.repro.addEventListener('change',()=>{params.repro=ui.repro.checked;});
+  ui.addFood.addEventListener('click',()=>{spawnFood(50); sync();});
+  ui.reset.addEventListener('click', reset);
+  ui.pause.addEventListener('click',()=>{paused=!paused; ui.pause.textContent=paused?'Resume (Space)':'Pause (Space)';});
+  addEventListener('keydown',e=>{ if(e.code==='Space'){ paused=!paused; ui.pause.textContent=paused?'Resume (Space)':'Pause (Space)'; }});
+
+  // ====== Behavior ======
+  function limit(vx,vy,max){
+    const s=Math.hypot(vx,vy); if(s>max){ const k=max/s; return [vx*k,vy*k]; } return [vx,vy];
+  }
+  function nearestFood(x,y,vision){
+    let best=null, bestD2=vision*vision;
+    for(let i=0;i<food.length;i++){
+      const f=food[i]; const dx=f.x-x, dy=f.y-y; const d2=dx*dx+dy*dy;
+      if(d2<bestD2){ best=f; bestD2=d2; }
+    }
+    return best;
+  }
+  function step(dt){
+    // natural food spawning
+    const spawn = params.foodRate*dt;
+    let acc=spawn;
+    while(acc>1){ food.push({x:rand(0,W),y:rand(0,H),v:1}); acc--; }
+    if(Math.random()<acc) food.push({x:rand(0,W),y:rand(0,H),v:1});
+
+    // update creatures
+    const maxV=params.maxSpeed;
+    for(let i=creatures.length-1;i>=0;i--){
+      const c=creatures[i]; if(!c.alive) continue;
+      c.age += dt;
+      c.hunger += 6*params.metabolism*dt;               // gets hungry over time
+      c.fatigue += (Math.hypot(c.vx,c.vy)/maxV)*4*dt;   // moving makes tired
+
+      // priorities
+      let ax=0, ay=0;
+      if(c.hunger>65){
+        const f = nearestFood(c.x,c.y,params.vision);
+        if(f){ const dx=f.x-c.x, dy=f.y-c.y, dist=Math.hypot(dx,dy)+1e-6;
+          ax += (dx/dist)*0.2; ay += (dy/dist)*0.2;
+          // eat if close
+          if(dist<6){
+            c.hunger = Math.max(0, c.hunger-40);
+            c.fatigue = Math.max(0, c.fatigue-6);
+            food.splice(food.indexOf(f),1);
+          }
+        }
+      } else if(c.fatigue>70){
+        // rest: slow down (friction) and recover
+        c.vx *= 0.92; c.vy *= 0.92;
+        c.fatigue = Math.max(0, c.fatigue - 12*dt);
+      } else {
+        // wander: a little noise steering
+        ax += (Math.random()-0.5)*0.6;
+        ay += (Math.random()-0.5)*0.6;
+      }
+
+      // integrate
+      c.vx += ax*dt*60; c.vy += ay*dt*60;
+      [c.vx,c.vy]=limit(c.vx,c.vy,maxV);
+      c.x += c.vx; c.y += c.vy;
+
+      // edges
+      if(params.wrap){
+        if(c.x<0) c.x+=W; if(c.x>=W) c.x-=W;
+        if(c.y<0) c.y+=H; if(c.y>=H) c.y-=H;
+      }else{
+        if(c.x<0||c.x>W) c.vx*=-1;
+        if(c.y<0||c.y>H) c.vy*=-1;
+        c.x=Math.max(0,Math.min(W,c.x)); c.y=Math.max(0,Math.min(H,c.y));
+      }
+
+      // death & reproduction
+      if(c.hunger>=100 || c.age>240){ // ~4 minutes lifespan at 60 fps
+        c.alive=false; creatures.splice(i,1);
+        // leave a tiny food on death to cycle nutrients
+        if(Math.random()<0.6) food.push({x:c.x,y:c.y,v:1});
+        continue;
+      }
+      if(params.repro && creatures.length<240 && c.age>20 && c.hunger<35 && c.fatigue<35){
+        if(Math.random()<0.002){ // low chance per frame
+          creatures.push(makeCreature(c.x+rand(-6,6), c.y+rand(-6,6)));
+        }
+      }
+    }
+    sync();
+  }
+
+  // ====== Render ======
+  function render(){
+    // fade trails a bit
+    ctx.fillStyle='rgba(11,15,20,0.35)'; ctx.fillRect(0,0,W,H);
+
+    // draw food
+    ctx.fillStyle='#8ef18e';
+    for(const f of food){ ctx.beginPath(); ctx.arc(f.x,f.y,2.4,0,Math.PI*2); ctx.fill(); }
+
+    // draw creatures
+    for(const c of creatures){
+      const a=Math.atan2(c.vy,c.vx);
+      const r=5;
+      // body
+      ctx.fillStyle = c.color;
+      ctx.beginPath();
+      ctx.moveTo(c.x + Math.cos(a)*r, c.y + Math.sin(a)*r);
+      ctx.lineTo(c.x + Math.cos(a+2.6)*r*0.6, c.y + Math.sin(a+2.6)*r*0.6);
+      ctx.lineTo(c.x + Math.cos(a-2.6)*r*0.6, c.y + Math.sin(a-2.6)*r*0.6);
+      ctx.closePath(); ctx.fill();
+      // HUD: hunger/fatigue bars
+      const w=16, x0=c.x-w/2, y0=c.y+10;
+      ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y0,w,3);
+      ctx.fillStyle='#ff7b7b'; ctx.fillRect(x0,y0,Math.min(w,c.hunger/100*w),3);
+      ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y0+4,w,3);
+      ctx.fillStyle='#ffd166'; ctx.fillRect(x0,y0+4,Math.min(w,c.fatigue/100*w),3);
+    }
+  }
+
+  // ====== Main loop + FPS ======
+  let last=performance.now(), acc=0, frames=0;
+  function loop(t){
+    const dt=Math.min(0.05,(t-last)/1000); last=t;
+    if(!paused){ step(dt); render(); }
+    frames++; acc+=dt;
+    if(acc>0.5){ ui.fps.textContent=Math.round(frames/acc); frames=0; acc=0; }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
