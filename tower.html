@@ -5,14 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
 <title>Tower Forge — Touch Defense</title>
 <style>
-  :root{--bg:#0b0f14;--panel:#101722;--ink:#e6edf3;--muted:#9aa4b2;--accent:#5ac8fa;--ok:#30d158;--warn:#ffd60a}
+  :root{--bg:#0b0f14;--panel:#101722;--ink:#e6edf3;--muted:#9aa4b2;--accent:#5ac8fa}
   *{box-sizing:border-box} html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  /* Layout */
   .wrap{display:grid;grid-template-rows:auto 1fr auto;min-height:100vh}
   header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #1c2330;background:linear-gradient(180deg,#0f141d,#0c1118)}
-  header .stats{display:flex;gap:8px;flex-wrap:wrap}
+  .stats{display:flex;gap:8px;flex-wrap:wrap}
   .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#0d1421;border:1px solid #1f2a3b;color:#c7d2de;font-weight:600}
-  .pill .dot{width:8px;height:8px;border-radius:8px;display:inline-block}
   #stage{position:relative}
   canvas{display:block;width:100%;height:100%;touch-action:none;background:radial-gradient(60% 50% at 50% 40%,#0c121a 0%,#081018 65%,#060b12 100%)}
   footer{border-top:1px solid #1c2330;background:#101722;padding:8px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
@@ -21,7 +19,6 @@
   #hint{position:absolute;left:10px;bottom:10px;color:#9aa4b2;background:rgba(10,14,20,.6);border:1px solid #1c2330;border-radius:10px;padding:8px 10px}
   #toast{position:absolute;right:10px;bottom:10px;padding:8px 10px;border-radius:10px;background:rgba(20,28,40,.9);border:1px solid #253248;opacity:0;transform:translateY(8px);transition:.25s}
   #toast.show{opacity:1;transform:translateY(0)}
-  @media (min-width:800px){ body{font-size:15px} }
 </style>
 </head>
 <body>
@@ -29,10 +26,10 @@
   <header>
     <div><strong>Tower Forge</strong> <span style="color:#9aa4b2">— tap to place towers</span></div>
     <div class="stats">
-      <span class="pill"><span class="dot" style="background:#ff6b6b"></span><span id="hearts">20</span> lives</span>
-      <span class="pill"><span class="dot" style="background:#ffd166"></span>$<span id="coins">150</span></span>
-      <span class="pill"><span class="dot" style="background:#5ac8fa"></span>Wave <span id="wave">1</span></span>
-      <span class="pill"><span class="dot" style="background:#30d158"></span><span id="fps">60</span> fps</span>
+      <span class="pill">❤️ <span id="hearts">20</span></span>
+      <span class="pill">💰 $<span id="coins">150</span></span>
+      <span class="pill">🌊 Wave <span id="wave">1</span></span>
+      <span class="pill">⚡ <span id="fps">60</span> fps</span>
     </div>
   </header>
 
@@ -42,7 +39,7 @@
     <button id="t_basic" class="primary">Basic ($50)</button>
     <button id="t_slow">Frost ($60)</button>
     <button id="t_splash">Splash ($80)</button>
-    <button id="start">Start Wave</button>
+    <button id="start" class="primary">▶ Start Wave</button>
     <button id="sell">Sell (tap tower)</button>
     <a href="index.html" style="margin-left:auto;color:#9aa4b2;align-self:center;text-decoration:none">⟵ Home</a>
   </footer>
@@ -50,48 +47,54 @@
 
 <script>
 (() => {
+  window.onerror=(m)=>alert('Error: '+m); // quick debug on mobile
+
   // ===== Canvas / world coords with pan/zoom =====
   const cv=document.getElementById('cv'), ctx=cv.getContext('2d',{alpha:false});
   let W=0,H=0,dpr=Math.min(2,window.devicePixelRatio||1);
   let zoom=1, panX=0, panY=0;
-  function resize(){W=cv.clientWidth=cv.parentElement.clientWidth;H=cv.clientHeight=Math.max(360,window.innerHeight-140);
-    cv.width=W*dpr; cv.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);}
+  function resize(){
+    W=cv.clientWidth=cv.parentElement.clientWidth;
+    H=cv.clientHeight=Math.max(360,window.innerHeight-140);
+    cv.width=W*dpr; cv.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+    centerBoard(); // ensure visible on iPhone
+  }
   addEventListener('resize',resize,{passive:true}); resize();
-  const toWorld = (x,y)=>[(x-panX)/zoom,(y-panY)/zoom];
+  const toWorld=(x,y)=>[(x-panX)/zoom,(y-panY)/zoom];
 
-  // ===== Map: 18x10 grid, path tiles and build tiles =====
-  const COLS=18, ROWS=10, TS=64; // tile size in world units (not pixels)
-  // path layout (0 empty/buildable, 1 path, 2 blocked)
-  // a simple snake-like path across the map:
-  const grid = Array.from({length:ROWS},()=>Array(COLS).fill(0));
-  const path = [];
+  // ===== Map: 18x10 grid =====
+  const COLS=18, ROWS=10, TS=64;
+  const grid=Array.from({length:ROWS},()=>Array(COLS).fill(0));
+  const path=[];
   (function makePath(){
-    let r=1, c=0, dir=1;
+    let r=1,c=0,dir=1;
     while(c<COLS){
       grid[r][c]=1; path.push({c,r});
       r+=dir;
-      if(r===ROWS-2||r===1){ // bounce and step right
-        grid[r][c]=1; path.push({c,r});
-        c++; if(c<COLS){ grid[r][c]=1; path.push({c,r}); }
-        dir*=-1;
-      }
+      if(r===ROWS-2 || r===1){ grid[r][c]=1; path.push({c,r}); c++; if(c<COLS){ grid[r][c]=1; path.push({c,r}); } dir*=-1; }
     }
   })();
-  // entry/exit
-  const startCell = path[0], endCell = path[path.length-1];
+  const startCell=path[0], endCell=path[path.length-1];
+
+  // center board in view
+  function centerBoard(){
+    const boardW=COLS*TS, boardH=ROWS*TS;
+    panX=(W-boardW)/2; panY=(H-boardH)/2;
+  }
 
   // ===== Game state =====
-  let coins=150, lives=20, wave=1, running=false;
-  const towers=[], bullets=[], mobs=[], particles=[];
-  const ui = {hearts:$('#hearts'), coins:$('#coins'), wave:$('#wave'), fps:$('#fps'), toast:$('#toast')};
+  let coins=150,lives=20,wave=1,running=false;
+  const towers=[], bullets=[], mobs=[], particles=[], ripples=[];
+  const ui={hearts:$('#hearts'),coins:$('#coins'),wave:$('#wave'),fps:$('#fps'),toast:$('#toast')};
   function $(id){return document.getElementById(id)}
   function toast(msg){ui.toast.textContent=msg; ui.toast.classList.add('show'); setTimeout(()=>ui.toast.classList.remove('show'),1200)}
+  function addRipple(sx,sy){ ripples.push({sx,sy,t:0}); }
 
   // ===== Towers =====
-  const T_DEF = {
-    basic: {cost:50, range:150, rof:0.6, dmg:14, color:'#74c0fc'},
-    slow : {cost:60, range:130, rof:0.8, dmg:8, slow:0.45, sDur:1.4, color:'#9ae6ff'},
-    splash:{cost:80, range:120, rof:0.9, dmg:10, splash:70, color:'#ffd166'}
+  const T_DEF={
+    basic:{cost:50,range:150,rof:0.6,dmg:14,color:'#74c0fc'},
+    slow :{cost:60,range:130,rof:0.8,dmg:8, slow:0.45,sDur:1.4,color:'#9ae6ff'},
+    splash:{cost:80,range:120,rof:0.9,dmg:10,splash:70,color:'#ffd166'}
   };
   let selected='basic', selectedTower=null;
   $('#t_basic').onclick=()=>{selected='basic'; selectTower(null);};
@@ -99,207 +102,144 @@
   $('#t_splash').onclick=()=>{selected='splash'; selectTower(null);};
 
   function addTower(col,row){
-    // ensure placeable
     if(grid[row][col]!==0){ toast('Can’t build on path'); return; }
     const def=T_DEF[selected];
     if(coins<def.cost){ toast('Not enough $'); return; }
     coins-=def.cost; ui.coins.textContent=coins;
     const x=col*TS+TS/2, y=row*TS+TS/2;
-    towers.push({x,y, col,row, type:selected, t:0, lvl:1, def});
-    // mark as blocked so we don't stack
+    towers.push({x,y,col,row,type:selected,t:0,lvl:1,def});
     grid[row][col]=2;
   }
   function sellTower(t){
     if(!t) return;
-    coins += Math.round(T_DEF[t.type].cost*0.6);
-    ui.coins.textContent=coins;
-    grid[t.row][t.col]=0;
-    const i=towers.indexOf(t); if(i>=0) towers.splice(i,1);
-    selectedTower=null;
-    toast('Sold');
+    coins+=Math.round(T_DEF[t.type].cost*0.6); ui.coins.textContent=coins;
+    grid[t.row][t.col]=0; towers.splice(towers.indexOf(t),1); selectedTower=null; toast('Sold');
   }
-  $('#sell').onclick=()=> sellTower(selectedTower);
-
+  $('#sell').onclick=()=>sellTower(selectedTower);
   function selectTower(t){ selectedTower=t; }
 
-  // ===== Mobs (enemies) =====
-  function spawnWave(nMult=1){
+  // ===== Mobs =====
+  function spawnWave(mult=1){
     running=true;
-    const n = Math.round(10 + wave*2.5*nMult);
-    let i=0; const spawnTimer = setInterval(()=>{
-      const hp = 60 + wave*22;
-      const speed = 55 + Math.min(120, wave*2);
-      mobs.push(makeMob(hp,speed));
-      if(++i>=n){ clearInterval(spawnTimer); }
-    }, 380);
+    const n=Math.round(10+wave*2.5*mult); let i=0;
+    const timer=setInterval(()=>{
+      mobs.push(makeMob(60+wave*22, 55+Math.min(120,wave*2)));
+      if(++i>=n) clearInterval(timer);
+    },380);
   }
   function makeMob(hp,speed){
-    const cellIndex=0;
     const x=startCell.c*TS+TS/2, y=startCell.r*TS+TS/2;
-    return {x,y, v: speed, hp, max:hp, cellIndex, slowT:0};
+    return {x,y,v:speed,hp,max:hp,cellIndex:0,slowT:0};
   }
 
-  // ===== Input: tap to build, tap tower to select, drag to pan, pinch to zoom =====
-  let dragging=false, lastTouchDist=0, lastX=0,lastY=0;
-  cv.addEventListener('pointerdown', e=>{
-    dragging=true; lastX=e.clientX; lastY=e.clientY;
-  });
-  cv.addEventListener('pointerup', e=>{
-    if(Math.hypot(e.clientX-lastX, e.clientY-lastY)<6){ onTap(e.clientX,e.clientY); }
+  // ===== Input =====
+  let dragging=false,lastTouchDist=0,lastX=0,lastY=0;
+  cv.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;});
+  cv.addEventListener('pointerup',e=>{
+    if(Math.hypot(e.clientX-lastX,e.clientY-lastY)<8){ onTap(e.clientX,e.clientY); addRipple(e.clientX,e.clientY); }
     dragging=false;
   });
-  cv.addEventListener('pointermove', e=>{
-    if(dragging){ panX+=e.clientX-lastX; panY+=e.clientY-lastY; lastX=e.clientX; lastY=e.clientY; }
-  });
-  cv.addEventListener('wheel', e=>{ const k=e.deltaY>0?0.9:1.1; zoom=Math.max(0.6,Math.min(2.0,zoom*k)); }, {passive:true});
-
-  cv.addEventListener('touchmove', e=>{
+  cv.addEventListener('pointermove',e=>{ if(dragging){ panX+=e.clientX-lastX; panY+=e.clientY-lastY; lastX=e.clientX; lastY=e.clientY; }});
+  cv.addEventListener('touchstart',e=>{ if(e.touches.length===1){ const t=e.touches[0]; onTap(t.clientX,t.clientY); addRipple(t.clientX,t.clientY);}},{passive:true});
+  cv.addEventListener('touchmove',e=>{
     if(e.touches.length===2){
       const dx=e.touches[0].clientX-e.touches[1].clientX, dy=e.touches[0].clientY-e.touches[1].clientY;
-      const d=Math.hypot(dx,dy);
-      if(lastTouchDist){ const k=d/lastTouchDist; zoom=Math.max(0.6,Math.min(2.0,zoom*k)); }
+      const d=Math.hypot(dx,dy); if(lastTouchDist){ const k=d/lastTouchDist; zoom=Math.max(0.6,Math.min(2,zoom*k)); }
       lastTouchDist=d;
     }else if(e.touches.length===1 && dragging){
       const t=e.touches[0]; panX+=t.clientX-lastX; panY+=t.clientY-lastY; lastX=t.clientX; lastY=t.clientY;
     }
-  }, {passive:true});
-  cv.addEventListener('touchend', ()=>{ lastTouchDist=0; }, {passive:true});
+  },{passive:true});
+  cv.addEventListener('touchend',()=>{lastTouchDist=0;},{passive:true});
 
   function onTap(cx,cy){
     const [wx,wy]=toWorld(cx,cy);
     const col=Math.floor(wx/TS), row=Math.floor(wy/TS);
     if(col<0||col>=COLS||row<0||row>=ROWS) return;
-    const existing = towers.find(t=>t.col===col && t.row===row);
-    if(existing){ // select or upgrade
+    const existing=towers.find(t=>t.col===col && t.row===row);
+    if(existing){
       selectTower(existing);
-      // upgrade cost = 70% of base per level
-      const upCost = Math.round(T_DEF[existing.type].cost*0.7*existing.lvl);
+      const upCost=Math.round(T_DEF[existing.type].cost*0.7*existing.lvl);
       if(coins>=upCost){
         coins-=upCost; ui.coins.textContent=coins;
-        existing.lvl++; existing.def = {...existing.def, dmg: existing.def.dmg*1.25, range: existing.def.range+8};
-        particles.push(makeBurst(existing.x,existing.y,'#b8f2ff'));
+        existing.lvl++; existing.def={...existing.def,dmg:existing.def.dmg*1.25,range:existing.def.range+8};
         toast('Upgraded');
-      }else{
-        toast('Tap SELL to refund');
-      }
+      }else{ toast('Tap SELL to refund'); }
       return;
     }
     addTower(col,row);
   }
 
   // ===== Physics =====
-  function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy) }
-  function makeBurst(x,y,color){ return {x,y, t:0, color}; }
+  const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  function makeBurst(x,y,color){ return {x,y,t:0,color}; }
   function makeBullet(x,y,tx,ty,tower){
-    const a=Math.atan2(ty-y,tx-x), sp=360; // px/s
-    return {x,y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, dmg:tower.def.dmg*tower.lvl, splash:tower.def.splash||0, slow:tower.def.slow?{k:tower.def.slow, dur:tower.def.sDur}:null, life:1.2, color:tower.def.color};
+    const a=Math.atan2(ty-y,tx-x), sp=360;
+    return {x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,dmg:tower.def.dmg*tower.lvl,splash:tower.def.splash||0,slow:tower.def.slow?{k:tower.def.slow,dur:tower.def.sDur}:null,life:1.2,color:tower.def.color};
   }
 
   function update(dt){
-    // mobs: follow path
+    // mobs follow path
     for(let i=mobs.length-1;i>=0;i--){
-      const m=mobs[i];
-      const seg = path[m.cellIndex+1]; if(!seg){ // reached end
-        mobs.splice(i,1); lives--; ui.hearts.textContent=lives; particles.push(makeBurst(m.x,m.y,'#ff6b6b')); if(lives<=0) gameOver();
-        continue;
-      }
-      const target={x:seg.c*TS+TS/2,y:seg.r*TS+TS/2};
-      const s = (m.slowT>0?0.5:1)*m.v*dt;
-      const dx=target.x-m.x, dy=target.y-m.y, d=Math.hypot(dx,dy);
-      if(d<s){ m.x=target.x; m.y=target.y; m.cellIndex++; }
-      else { m.x+=dx/d*s; m.y+=dy/d*s; }
-      if(m.slowT>0) m.slowT -= dt;
-
-      // die?
+      const m=mobs[i], seg=path[m.cellIndex+1];
+      if(!seg){ mobs.splice(i,1); lives--; ui.hearts.textContent=lives; particles.push(makeBurst(m.x,m.y,'#ff6b6b')); if(lives<=0) resetGame(); continue; }
+      const tx=seg.c*TS+TS/2, ty=seg.r*TS+TS/2;
+      const s=(m.slowT>0?0.5:1)*m.v*dt, dx=tx-m.x, dy=ty-m.y, d=Math.hypot(dx,dy);
+      if(d<s){ m.x=tx; m.y=ty; m.cellIndex++; } else { m.x+=dx/d*s; m.y+=dy/d*s; }
+      if(m.slowT>0) m.slowT-=dt;
       if(m.hp<=0){ coins+=8; ui.coins.textContent=coins; particles.push(makeBurst(m.x,m.y,'#a0ff90')); mobs.splice(i,1); }
     }
 
     // towers fire
     for(const t of towers){
-      t.t += dt;
-      const def=t.def;
-      if(t.t >= def.rof){
-        // acquire target
-        let best=null, bestD=1e9;
-        for(const m of mobs){
-          const d=dist(t,m); if(d<=def.range && d<bestD){ best=m; bestD=d; }
-        }
-        if(best){
-          bullets.push(makeBullet(t.x,t.y,best.x,best.y,t));
-          t.t=0;
-        }
+      t.t+=dt; const def=t.def;
+      if(t.t>=def.rof){
+        let best=null,bd=1e9; for(const m of mobs){ const d=dist(t,m); if(d<=def.range && d<bd){ best=m; bd=d; } }
+        if(best){ bullets.push(makeBullet(t.x,t.y,best.x,best.y,t)); t.t=0; }
       }
     }
 
     // bullets
     for(let i=bullets.length-1;i>=0;i--){
-      const b=bullets[i]; b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
-      if(b.life<=0){ bullets.splice(i,1); continue; }
-      // hit check
-      let hit=null, minD=12;
-      for(const m of mobs){ const d=dist(b,m); if(d<minD){ hit=m; minD=d; break; } }
+      const b=bullets[i]; b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt; if(b.life<=0){ bullets.splice(i,1); continue; }
+      let hit=null,minD=12; for(const m of mobs){ const d=dist(b,m); if(d<minD){ hit=m; minD=d; break; } }
       if(hit){
         if(b.splash>0){
-          for(const m of mobs){ const d=dist(b,m); if(d<=b.splash){ m.hp -= b.dmg*(1-d/b.splash*0.6); if(b.slow) { m.slowT=Math.max(m.slowT,b.slow.dur); m.v*=b.slow.k; m.v=Math.max(40,m.v); } } }
+          for(const m of mobs){ const d=dist(b,m); if(d<=b.splash){ m.hp-=b.dmg*(1-d/b.splash*0.6); if(b.slow){ m.slowT=Math.max(m.slowT,b.slow.dur); m.v=Math.max(40,m.v*b.slow.k); } } }
         }else{
-          hit.hp -= b.dmg; if(b.slow){ hit.slowT=Math.max(hit.slowT,b.slow.dur); hit.v*=b.slow.k; hit.v=Math.max(40,hit.v); }
+          hit.hp-=b.dmg; if(b.slow){ hit.slowT=Math.max(hit.slowT,b.slow.dur); hit.v=Math.max(40,hit.v*b.slow.k); }
         }
-        particles.push(makeBurst(b.x,b.y,b.color));
-        bullets.splice(i,1);
+        particles.push(makeBurst(b.x,b.y,b.color)); bullets.splice(i,1);
       }
     }
 
     // particles
-    for(let i=particles.length-1;i>=0;i--){
-      particles[i].t += dt; if(particles[i].t>0.6) particles.splice(i,1);
-    }
+    for(let i=particles.length-1;i>=0;i--){ particles[i].t+=dt; if(particles[i].t>0.6) particles.splice(i,1); }
   }
 
   // ===== Render =====
   function draw(){
-    ctx.save();
     ctx.clearRect(0,0,W,H);
-    // pan/zoom
-    ctx.translate(panX,panY); ctx.scale(zoom,zoom);
+    ctx.save(); ctx.translate(panX,panY); ctx.scale(zoom,zoom);
 
-    // board shadow
-    ctx.save(); ctx.shadowColor='rgba(0,0,0,.6)'; ctx.shadowBlur=18;
-
-    // draw tiles
+    // board (brighter so it’s obvious on iPhone)
     for(let r=0;r<ROWS;r++){
       for(let c=0;c<COLS;c++){
-        const x=c*TS, y=r*TS;
-        // base tile
-        const g=ctx.createLinearGradient(x,y,x+TS,y+TS);
-        g.addColorStop(0,'#0f1622'); g.addColorStop(1,'#0b111b');
-        ctx.fillStyle=g; ctx.fillRect(x,y,TS-1,TS-1);
-
-        // path
-        if(grid[r][c]===1){
-          const p=ctx.createLinearGradient(x,y,x+TS,y+TS);
-          p.addColorStop(0,'#1c2635'); p.addColorStop(1,'#111a28');
-          ctx.fillStyle=p; ctx.fillRect(x+6,y+6,TS-12,TS-12);
-          // lane highlight
-          ctx.strokeStyle='rgba(90,200,250,0.08)'; ctx.lineWidth=2;
-          ctx.strokeRect(x+8,y+8,TS-16,TS-16);
-        }
-        if(grid[r][c]===2){ // built
-          ctx.fillStyle='rgba(255,255,255,0.03)'; ctx.fillRect(x+2,y+2,TS-4,TS-4);
-        }
+        const x=c*TS,y=r*TS;
+        ctx.fillStyle = (grid[r][c]===1) ? '#1f2b3e' : '#121b2a';
+        ctx.fillRect(x,y,TS-1,TS-1);
+        // subtle grid lines
+        ctx.strokeStyle='rgba(255,255,255,0.05)'; ctx.strokeRect(x+0.5,y+0.5,TS-1,TS-1);
       }
     }
-    ctx.restore();
 
     // towers
     for(const t of towers){
-      // glow
-      const grad=ctx.createRadialGradient(t.x,t.y,6,t.x,t.y,26);
-      grad.addColorStop(0, t.def.color); grad.addColorStop(1,'rgba(0,0,0,0)');
-      ctx.fillStyle=grad; ctx.beginPath(); ctx.arc(t.x,t.y,26,0,Math.PI*2); ctx.fill();
-      // body
+      const g=ctx.createRadialGradient(t.x,t.y,6,t.x,t.y,26);
+      g.addColorStop(0,t.def.color); g.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(t.x,t.y,26,0,Math.PI*2); ctx.fill();
       ctx.fillStyle='#e6edf3'; ctx.beginPath(); ctx.arc(t.x,t.y,10,0,Math.PI*2); ctx.fill();
       ctx.fillStyle=t.def.color; ctx.beginPath(); ctx.arc(t.x,t.y,6,0,Math.PI*2); ctx.fill();
-      // selected ring
       if(selectedTower===t){ ctx.strokeStyle=t.def.color; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(t.x,t.y,t.def.range,0,Math.PI*2); ctx.stroke(); }
     }
 
@@ -313,7 +253,7 @@
       ctx.fillStyle='#6df26d'; ctx.fillRect(m.x-12,m.y-16,24*hp,4);
     }
 
-    // bullets (trails)
+    // bullets
     for(const b of bullets){
       ctx.strokeStyle=b.color; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(b.x-b.vx*0.05,b.y-b.vy*0.05); ctx.lineTo(b.x,b.y); ctx.stroke();
       ctx.fillStyle=b.color; ctx.beginPath(); ctx.arc(b.x,b.y,2.5,0,Math.PI*2); ctx.fill();
@@ -325,27 +265,31 @@
       for(let i=0;i<6;i++){ const ang=i*Math.PI/3; ctx.fillRect(p.x+Math.cos(ang)*p.t*90, p.y+Math.sin(ang)*p.t*90,2,2); }
       ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,8*a,0,Math.PI*2); ctx.fill();
     }
-
     ctx.restore();
+
+    // tap ripples (screen space so you see it immediately)
+    for(let i=ripples.length-1;i>=0;i--){
+      const r=ripples[i]; r.t+=0.02; const a=1-r.t; if(a<=0){ ripples.splice(i,1); continue; }
+      const k=20+r.t*40; ctx.save(); ctx.strokeStyle=`rgba(90,200,250,${a})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(r.sx,r.sy,k,0,Math.PI*2); ctx.stroke(); ctx.restore();
+    }
   }
 
   // ===== Loop / FPS =====
-  let last=performance.now(), fpsA=60, acc=0, frames=0;
+  let last=performance.now(),acc=0,frames=0;
   function tick(t){
     const dt=Math.min(0.05,(t-last)/1000); last=t;
-    if(running) update(dt);
-    draw();
-    frames++; acc+=dt; if(acc>0.4){ fpsA=Math.round(frames/acc); ui.fps.textContent=fpsA; frames=0; acc=0; }
+    if(running) update(dt); draw();
+    frames++; acc+=dt; if(acc>0.4){ $('#fps').textContent=Math.round(frames/acc); frames=0; acc=0; }
     requestAnimationFrame(tick);
   } requestAnimationFrame(tick);
 
-  // ===== Wave control & game over =====
+  // ===== Wave control & reset =====
   $('#start').onclick=()=>{ if(!running) spawnWave(1); };
-  function gameOver(){ running=false; toast('Game over! Tap Start to try again'); lives=20; coins=150; ui.hearts.textContent=lives; ui.coins.textContent=coins; wave=1; ui.wave.textContent=wave; mobs.length=towers.length=bullets.length=particles.length=0; grid.forEach((row,y)=>row.forEach((v,x)=>{ if(v===2) row[x]=0; })); }
-  // Auto next wave when cleared
-  setInterval(()=>{ if(running && mobs.length===0){ wave++; ui.wave.textContent=wave; coins+=Math.round(40+wave*10); ui.coins.textContent=coins; spawnWave(1.1); } }, 600);
+  function resetGame(){ running=false; toast('Game over! Tap Start to try again'); lives=20; coins=150; wave=1; $('#hearts').textContent=lives; $('#coins').textContent=coins; $('#wave').textContent=wave; mobs.length=towers.length=bullets.length=particles.length=0; for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++) if(grid[r][c]===2) grid[r][c]=0; }
 
-  // ===== Helpers =====
+  // Auto-start first wave after 3s (mobile UX)
+  setTimeout(()=>{ if(!running){ spawnWave(1); toast('Auto-starting wave 1'); } },3000);
+
   function $(id){ return document.getElementById(id) }
 })();
 </script>
